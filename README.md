@@ -33,6 +33,24 @@ it to. Each note is checked before it's saved:
 
 Run `gmesh ingest -v` to see everything the checks drop.
 
+### Tidying a finished book
+
+`gmesh edit BOOK` has a model review all of a book's notes at once: drop
+trivia and scene-by-scene narration (cards are a glossary, not a plot
+summary), merge duplicates like "Guyen" and "Vrie Guyen", and drop time
+markers like "That night". Because the editor sees the whole book, it can
+only remove and combine, never write, and the code checks every change:
+
+- **Merges need a shared name word** the reader has already seen, so a twist
+  ("the hooded man was Mordecai") can't be merged. A merged card keeps its
+  first appearance, and nothing folded into it shows earlier than it did.
+- **Drops stay inside the book being edited,** never touch the narrator, and
+  can't remove an entity with more than 5 facts.
+- **The database is backed up** before anything changes.
+
+Use `--dry-run --save plan.json` to review, then `--from plan.json` to apply
+that same plan without asking the model again.
+
 ## Quick start
 
 ```sh
@@ -41,6 +59,8 @@ go build -o gmesh ./cmd/gmesh
 export ANTHROPIC_API_KEY=...        # or see "Keys" below
 ./gmesh ingest book.epub --dry-run  # chapters, length and number of model calls
 ./gmesh ingest book.epub --skip 1-3,48   # leave out front matter, back matter, next-book previews
+./gmesh edit book --dry-run --save plan.json   # review the tidy-up, then:
+./gmesh edit book --from plan.json
 ./gmesh chapters book
 ./gmesh pos book --chapter 12       # where you are
 ./gmesh entities book
@@ -87,9 +107,13 @@ Bring your own key. Reading never calls a model, so a key is only needed to
 add books.
 
 - **Anthropic:** `ANTHROPIC_API_KEY`. The default model is `claude-opus-5-5`.
-  Set `--effort` (default `medium`) and `--model` on `ingest`. Requests opt
-  into server-side fallback, so a passage a safety classifier declines is
-  retried on a fallback model instead of failing.
+  Set `--effort` (default `medium`) and `--model` on `ingest` and `edit`.
+  Requests opt into server-side fallback (except on Haiku, which has none),
+  so a passage a safety classifier declines is retried on a fallback model
+  instead of failing.
+- **Cheaper:** `ingest --model claude-haiku-5-5`, then `edit --effort high`
+  on the default model. On *Children of Time* that cost about $0.90 against
+  $4.25 for Opus alone, with similar cards.
 - **Anything OpenAI-compatible** (OpenAI, OpenRouter, Ollama, llama.cpp,
   vLLM): `GMESH_PROVIDER=openai`, `GMESH_BASE_URL`, `GMESH_MODEL`, and
   `GMESH_API_KEY` if the server needs one. The model must support JSON-schema
@@ -110,6 +134,7 @@ admin's key. The first user created is the admin, and approves with
 | `internal/epub` | EPUB parsing, chapters split on table-of-contents anchors |
 | `internal/text` | sentence splitting and name matching |
 | `internal/extract` | chunking, the prompt, and the spoiler checks (`validate.go`) |
+| `internal/edit` | the whole-book tidy-up and its checks |
 | `internal/store` | SQLite schema and queries; positions are sentence numbers |
 | `internal/llm` | Anthropic (official Go SDK) and OpenAI-compatible clients |
 | `internal/keys`, `internal/secrets` | whose key pays, and keys at rest |

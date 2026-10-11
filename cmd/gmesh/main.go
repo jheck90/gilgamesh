@@ -26,6 +26,8 @@ Usage: gmesh [-db FILE] [-user NAME] <command> [args]
 Books
   ingest FILE.epub         add a book and take notes on it (resumes if interrupted);
                            try --dry-run first, then --skip front/back matter
+  edit BOOK                have a model tidy a finished book's notes: drop trivia,
+                           merge duplicates (try --dry-run --save FILE, then --from FILE)
   books                    list books
   chapters BOOK            list a book's chapters and their numbers
   rm BOOK --yes            remove a book and everything noted from it
@@ -88,6 +90,8 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	switch cmd {
 	case "ingest":
 		return a.ingest(ctx, rest)
+	case "edit":
+		return a.edit(ctx, rest)
 	case "books":
 		return a.books(ctx)
 	case "chapters":

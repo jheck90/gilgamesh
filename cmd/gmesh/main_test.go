@@ -37,6 +37,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	editCalls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Messages []struct{ Content string } `json:"messages"`
@@ -46,6 +47,13 @@ func TestEndToEnd(t *testing.T) {
 		prompt := req.Messages[1].Content
 		var reply string
 		switch {
+		case strings.Contains(prompt, "ENTITIES (in order of first appearance"):
+			editCalls++
+			if !strings.Contains(prompt, "F3 ch2: Carl waved at the hooded man.") {
+				t.Errorf("edit prompt:\n%s", prompt)
+			}
+			reply = `{"category_map": [], "merges": [], "drop_entities": [], "drop_aliases": [],
+				"drop_facts": ["F3"], "drop_markers": []}`
 		case strings.Contains(prompt, "[2] Carl woke up"):
 			reply = `{"entities": [{"entity_id": "", "name": "Carl", "type": "character", "is_narrator": false, "new_aliases": [],
 				"facts": [{"text": "Carl woke up in the dungeon without his boots.", "sentences": [2]}]}],
@@ -125,6 +133,27 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if out := mustRun("timeline", "crawl"); !strings.Contains(out, "Day 1") {
 		t.Errorf("timeline:\n%s", out)
+	}
+
+	// The editor: review first, then apply the saved reply without asking
+	// the model again.
+	plan := filepath.Join(dir, "plan.json")
+	out = mustRun("edit", "crawl", "--dry-run", "--save", plan)
+	if !strings.Contains(out, "Facts dropped, of 3 (1):") || !strings.Contains(out, "Carl, ch2: Carl waved") || !strings.Contains(out, "nothing changed") {
+		t.Errorf("edit dry run:\n%s", out)
+	}
+	if out := mustRun("card", "crawl", "Carl"); !strings.Contains(out, "waved") {
+		t.Errorf("a dry run changed Carl:\n%s", out)
+	}
+	out = mustRun("edit", "crawl", "--from", plan)
+	if !strings.Contains(out, "1 facts and 0 time markers dropped") || !strings.Contains(out, ".before-edit-1-") {
+		t.Errorf("edit:\n%s", out)
+	}
+	if out := mustRun("card", "crawl", "Carl"); strings.Contains(out, "waved") || !strings.Contains(out, "without his boots") {
+		t.Errorf("Carl after the edit:\n%s", out)
+	}
+	if editCalls != 1 {
+		t.Errorf("the model was asked to edit %d times, want 1", editCalls)
 	}
 
 	// A second reader starts with no position, and can't spend a key
