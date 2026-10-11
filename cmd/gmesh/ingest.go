@@ -63,11 +63,14 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		words += len(strings.Fields(s.Text))
 	}
 	fmt.Fprintf(a.out, "%s by %s\n", eb.Title, eb.Author)
-	fmt.Fprintf(a.out, "series: %s #%g\n", seriesName, seriesIndex)
-	fmt.Fprintf(a.out, "%d chapters, %d sentences, %d words (about %dk tokens of text)\n",
-		len(chapters), len(sentences), words, words*4/3/1000)
-	fmt.Fprintf(a.out, "extraction: %d model calls of up to %d words each\n", nChunks, *chunkWords)
+	summary := func() {
+		fmt.Fprintf(a.out, "series: %s #%g\n", seriesName, seriesIndex)
+		fmt.Fprintf(a.out, "%d chapters, %d sentences, %d words (about %dk tokens of text)\n",
+			len(chapters), len(sentences), words, words*4/3/1000)
+		fmt.Fprintf(a.out, "extraction: %d model calls of up to %d words each\n", nChunks, *chunkWords)
+	}
 	if *dry {
+		summary()
 		for _, sec := range plan {
 			note := fmt.Sprintf("%d words", sec.words)
 			if sec.skipped != "" {
@@ -96,6 +99,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		return err
 	}
 	if !exists {
+		summary()
 		sid, err := st.EnsureSeries(ctx, seriesName)
 		if err != nil {
 			return err
@@ -126,7 +130,8 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 			fmt.Fprintf(a.out, "already done (book id %d)\n", book.ID)
 			return nil
 		}
-		fmt.Fprintf(a.out, "resuming at call %d of %d\n", p.NextChunk+1, p.TotalChunks)
+		// The stored plan wins over this run's flags, so say what it is.
+		fmt.Fprintf(a.out, "resuming at call %d of %d (the --skip and --chunk-words from the first run still apply)\n", p.NextChunk+1, p.TotalChunks)
 	}
 
 	bx, err := box()
