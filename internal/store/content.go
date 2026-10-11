@@ -28,6 +28,10 @@ func visible(pos Position, bookAlias, ordCol string) (string, []any) {
 	return q, []any{pos.SeriesID, pos.SeriesIndex, pos.BookID, pos.Ord}
 }
 
+// NarratorName is the placeholder for a first-person narrator whose name
+// the reader hasn't learned yet.
+const NarratorName = "Narrator"
+
 type EntitySummary struct {
 	ID          int64
 	Name        string
@@ -86,6 +90,14 @@ func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySumm
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+
+	// A first-person narrator starts out as "Narrator"; once their name is
+	// revealed, show them by it.
+	for i := range out {
+		if e := &out[i]; e.Narrator && e.Name == NarratorName && len(e.Aliases) > 0 {
+			e.Name, e.Aliases = e.Aliases[0], e.Aliases[1:]
+		}
 	}
 
 	where, args = visible(pos, "b", "f.revealed_ord")

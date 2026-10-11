@@ -104,7 +104,7 @@ func validate(out output, c chunk, k known) (store.ChunkWrite, []string) {
 
 		name := clean(e.Name)
 		first, found := c.firstMention(name)
-		if !found && e.IsNarrator && strings.EqualFold(name, "Narrator") {
+		if !found && e.IsNarrator && strings.EqualFold(name, store.NarratorName) {
 			first, found = c.firstOrd(), true
 		}
 		if !found && len(aliases) > 0 {

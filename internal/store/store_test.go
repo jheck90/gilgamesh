@@ -161,3 +161,23 @@ func TestGrants(t *testing.T) {
 		t.Errorf("grant = %+v ok=%v err=%v", g, ok, err)
 	}
 }
+
+func TestNarratorTakesRevealedName(t *testing.T) {
+	s, ctx := open(t), context.Background()
+	sid, _ := s.EnsureSeries(ctx, "Saga")
+	b := addBook(t, s, sid, 1, "One", 50)
+	if _, err := s.ApplyChunk(ctx, ChunkWrite{BookID: b.ID, SeriesID: sid, NextChunk: 1,
+		New: []NewEntity{{Name: NarratorName, Type: "character", Narrator: true, FirstOrd: 0,
+			Aliases: []AliasRec{{Alias: "Jim", Ord: 30}}}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		ord  int
+		want string
+	}{{29, NarratorName}, {30, "Jim"}} {
+		es, err := s.VisibleEntities(ctx, At(b, c.ord))
+		if err != nil || len(es) != 1 || es[0].Name != c.want || len(es[0].Aliases) != 0 {
+			t.Errorf("at %d: %+v, %v; want name %q and no aliases", c.ord, es, err, c.want)
+		}
+	}
+}
