@@ -1,0 +1,124 @@
+{{define "head"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{.Title}}</title>
+<meta name="theme-color" content="#1d2a3a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Gilgamesh">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/icon-180.png">
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/register.js" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Gilgamesh</a>
+  {{with .Book}}<a class="crumb" href="/b/{{.ID}}">{{.Title}}</a>{{end}}
+</header>
+<main>
+{{end}}
+
+{{define "foot"}}
+</main>
+</body>
+</html>
+{{end}}
+
+{{define "error"}}{{template "head" .}}
+<p class="empty">{{.Message}}</p>
+<p><a href="/">Back to your books</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "home"}}{{template "head" .}}
+<h1>Your books</h1>
+{{if not .Books}}
+<p class="empty">No books yet. Add one on the server with <code>gmesh ingest FILE.epub</code>.</p>
+{{end}}
+<ul class="books">
+{{range .Books}}
+  <li>
+    <a href="/b/{{.Book.ID}}">
+      <span class="title">{{.Book.Title}}</span>
+      <span class="meta">{{if ne .Book.SeriesName .Book.Title}}{{.Book.SeriesName}} #{{.Book.SeriesIndex}} · {{end}}{{if .Where}}{{.Where}}{{else}}Not started{{end}}{{if not .Ready}} · notes still being written{{end}}</span>
+    </a>
+  </li>
+{{end}}
+</ul>
+{{template "foot" .}}{{end}}
+
+{{define "book"}}{{template "head" .}}
+<h1>{{.Book.Title}}</h1>
+{{if .HasPos}}<p class="where">{{.Where}}</p>{{end}}
+
+{{if .Next}}
+<form method="post" action="/b/{{.Book.ID}}/next">
+  <button class="primary" type="submit">I finished {{.Next}}</button>
+</form>
+{{end}}
+
+<details class="jump"{{if not .HasPos}} open{{end}}>
+  <summary>{{if .HasPos}}Jump to a chapter{{else}}Where are you?{{end}}</summary>
+  <form method="post" action="/b/{{.Book.ID}}/pos" class="row">
+    <label for="chapter" class="sr">Last chapter you finished</label>
+    <select id="chapter" name="chapter">
+      {{range .Chapters}}<option value="{{.Idx}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>
+    <button type="submit">Set</button>
+  </form>
+  <p class="hint">Pick the last chapter you finished. Titles of later chapters stay hidden.</p>
+</details>
+
+{{if .HasPos}}
+<form method="get" action="/b/{{.Book.ID}}" class="row search">
+  <label for="q" class="sr">Find a name</label>
+  <input id="q" name="q" type="search" value="{{.Query}}" placeholder="Find a name" autocomplete="off">
+  <button type="submit">Find</button>
+</form>
+<p class="meta"><a href="/b/{{.Book.ID}}/timeline">Timeline</a> · {{.Total}} {{plural .Total "entry" "entries"}}{{if .Query}} matching “{{.Query}}” · <a href="/b/{{.Book.ID}}">clear</a>{{end}}</p>
+
+{{range .Groups}}
+<section>
+  <h2>{{.Type}}</h2>
+  <ul class="entities">
+  {{range .Entities}}
+    <li><a href="/b/{{$.Book.ID}}/e/{{.ID}}"><span class="name">{{.Name}}</span>{{if .Aliases}} <span class="aka">{{range $i, $a := .Aliases}}{{if $i}}, {{end}}{{$a}}{{end}}</span>{{end}}<span class="count">{{.Facts}}</span></a></li>
+  {{end}}
+  </ul>
+</section>
+{{else}}
+<p class="empty">{{if .Query}}Nothing by that name yet.{{else}}No one and nothing noted yet.{{end}}</p>
+{{end}}
+{{end}}
+{{template "foot" .}}{{end}}
+
+{{define "entity"}}{{template "head" .}}
+<p class="kind">{{.Entity.Type}}</p>
+<h1>{{.Entity.Name}}</h1>
+{{if .Entity.Aliases}}<p class="aka">Also: {{range $i, $a := .Entity.Aliases}}{{if $i}}, {{end}}{{$a}}{{end}}</p>{{end}}
+<p class="where">As of: {{.Where}}</p>
+
+{{range .Sections}}
+<section>
+  <h2>{{.Heading}}</h2>
+  <ul class="facts">
+  {{range .Facts}}
+    <li><details><summary>{{.Text}}</summary>{{range .Sources}}<blockquote>{{.}}</blockquote>{{end}}</details></li>
+  {{end}}
+  </ul>
+</section>
+{{else}}
+<p class="empty">Nothing noted yet.</p>
+{{end}}
+<p class="hint">Tap a fact to see the lines it comes from.</p>
+{{template "foot" .}}{{end}}
+
+{{define "timeline"}}{{template "head" .}}
+<h1>Timeline</h1>
+<p class="where">As of: {{.Where}}</p>
+<ol class="timeline">
+{{range .Marks}}<li><span class="name">{{.Label}}</span> <span class="meta">{{.Where}}</span></li>{{else}}<p class="empty">No in-world days or dates yet.</p>{{end}}
+</ol>
+{{template "foot" .}}{{end}}

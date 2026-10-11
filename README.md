@@ -1,0 +1,120 @@
+# Gilgamesh
+
+A self-hosted, spoiler-safe companion for the book you're reading. Tell it
+where you are, and look up any character, corporation, place or term you've
+met so far: just the facts the book has given you, nothing past your page.
+
+Status: early. `gmesh` reads an EPUB, takes position-tagged notes on it
+with a model, and serves a small web app you can install on your phone to
+look them up. Page snapping, the visual timeline and reread hints come next.
+
+## How spoilers are kept out
+
+A model reads the book once, in order, one chapter (or part of a chapter)
+at a time, and takes notes. Every note records the sentence where the
+reader learns it. Looking something up is then a database query filtered by
+your position, with no model involved.
+
+The prompt asks the model not to spoil anything, but the code doesn't trust
+it to. Each note is checked before it's saved:
+
+- **Every fact cites sentences from the passage the model was given.** A fact
+  becomes visible at the last sentence it cites.
+- **New names must appear in the text.** The model can't introduce someone
+  by a name the book hasn't used yet, even if it knows the book.
+- **Aliases must appear in the sentence they cite,** and each alias has its
+  own reveal point: learning that two names are one person is a reveal too.
+- **Known characters only get new facts from a passage that names them** (by
+  a name you already know). This stops the model from quietly tying a scene
+  to someone you haven't connected it to yet. First-person narrators are
+  exempt.
+- **The model sees only the current passage** plus what a reader would know
+  at its start. It never sees later chapters.
+
+Run `gmesh ingest -v` to see everything the checks drop.
+
+## Quick start
+
+```sh
+go build -o gmesh ./cmd/gmesh
+
+export ANTHROPIC_API_KEY=...        # or see "Keys" below
+./gmesh ingest book.epub --dry-run  # chapters, length and number of model calls
+./gmesh ingest book.epub --skip 1-3,48   # leave out front matter, back matter, next-book previews
+./gmesh chapters book
+./gmesh pos book --chapter 12       # where you are
+./gmesh entities book
+./gmesh card book "Princess Donut" --sources
+./gmesh timeline book
+```
+
+## Run the web app
+
+```sh
+./gmesh serve --addr :8080
+```
+
+Or with Docker:
+
+```sh
+docker run -d -p 8080:8080 -v gilgamesh:/data -v /path/to/books:/books:ro ghcr.io/jheck90/gilgamesh
+docker exec -it -e ANTHROPIC_API_KEY=... <container> gmesh ingest /books/book.epub --dry-run
+```
+
+Open it on your phone and use "Add to Home Screen". Tap "I finished ..."
+at the end of each chapter. Titles of chapters you haven't reached stay
+hidden, and anything you haven't met yet returns the same "Nothing here
+yet" as something that doesn't exist.
+
+There are no accounts. Run it for yourself on a private network, or behind
+an authenticating proxy with `--trust-header Remote-User` so each reader
+gets their own position. Only use `--trust-header` when the app can't be
+reached except through that proxy.
+
+## Books
+
+Add the books in a series in order (`--series` and `--index` override what
+the EPUB says). Facts from earlier books carry forward.
+
+Ebooks often end with a preview chapter of the next book. Check the end of
+the `--dry-run` listing and skip it.
+
+Gilgamesh only reads DRM-free EPUBs and doesn't help remove DRM.
+
+## Keys
+
+Bring your own key. Reading never calls a model, so a key is only needed to
+add books.
+
+- **Anthropic:** `ANTHROPIC_API_KEY`. The default model is `claude-opus-5-5`.
+  Set `--effort` (default `medium`) and `--model` on `ingest`. Requests opt
+  into server-side fallback, so a passage a safety classifier declines is
+  retried on a fallback model instead of failing.
+- **Anything OpenAI-compatible** (OpenAI, OpenRouter, Ollama, llama.cpp,
+  vLLM): `GMESH_PROVIDER=openai`, `GMESH_BASE_URL`, `GMESH_MODEL`, and
+  `GMESH_API_KEY` if the server needs one. The model must support JSON-schema
+  structured output.
+
+Several readers can share an instance (`-user NAME`, or `GMESH_USER`).
+Everyone gets their own position. To store a key per reader, set
+`GMESH_SECRET` (`gmesh keygen` makes one) and run `gmesh key set`. Keys are
+encrypted at rest. A reader without a key can `gmesh key request` to use the
+admin's key. The first user created is the admin, and approves with
+`gmesh key approve NAME --cap TOKENS` (a monthly cap; leave it off for none).
+
+## Layout
+
+| Path | What |
+|---|---|
+| `cmd/gmesh` | the CLI |
+| `internal/epub` | EPUB parsing, chapters split on table-of-contents anchors |
+| `internal/text` | sentence splitting and name matching |
+| `internal/extract` | chunking, the prompt, and the spoiler checks (`validate.go`) |
+| `internal/store` | SQLite schema and queries; positions are sentence numbers |
+| `internal/llm` | Anthropic (official Go SDK) and OpenAI-compatible clients |
+| `internal/keys`, `internal/secrets` | whose key pays, and keys at rest |
+| `internal/web` | the reading web app (server-rendered, installable) |
+
+## License
+
+AGPL-3.0. See [LICENSE](LICENSE).

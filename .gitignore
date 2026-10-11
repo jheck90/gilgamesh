@@ -1,0 +1,10 @@
+/gmesh
+*.db
+*.db-wal
+*.db-shm
+
+# Never commit books.
+*.epub
+
+# Local secrets (direnv).
+.envrc
