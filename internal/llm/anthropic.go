@@ -47,11 +47,14 @@ func (a *anthropicClient) JSON(ctx context.Context, req Request) ([]byte, Usage,
 			Effort: anthropic.BetaOutputConfigEffort(a.effort),
 			Format: anthropic.BetaJSONOutputFormatParam{Schema: req.Schema},
 		},
-		// If a safety classifier declines a passage (fight scenes in a
-		// dungeon book can trip one), let the API retry it on its
-		// recommended fallback model instead of failing the chunk.
-		Fallbacks: anthropic.BetaFallbacksParamUnion{OfDefault: constant.ValueOf[constant.Default]()},
-		Betas:     []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01},
+	}
+	// If a safety classifier declines a passage (fight scenes in a
+	// dungeon book can trip one), let the API retry it on its recommended
+	// fallback model instead of failing the chunk. Haiku has no fallback
+	// and rejects the parameter.
+	if !strings.Contains(a.model, "haiku") {
+		params.Fallbacks = anthropic.BetaFallbacksParamUnion{OfDefault: constant.ValueOf[constant.Default]()}
+		params.Betas = []anthropic.AnthropicBeta{anthropic.AnthropicBetaServerSideFallback2026_07_01}
 	}
 
 	stream := a.client.Beta.Messages.NewStreaming(ctx, params)
