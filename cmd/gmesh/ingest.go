@@ -134,33 +134,21 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		fmt.Fprintf(a.out, "resuming at call %d of %d (the --skip and --chunk-words from the first run still apply)\n", p.NextChunk+1, p.TotalChunks)
 	}
 
-	bx, err := box()
+	client, res, err := a.modelClient(ctx, st, user, *model, *effort)
 	if err != nil {
 		return err
 	}
-	env := keys.Env(os.Getenv)
-	res, err := keys.Resolve(ctx, st, bx, user, env)
-	if err != nil {
-		return err
-	}
-	if *model != "" {
-		res.Config.Model = *model
-	}
-	if res.Config.Provider == llm.ProviderAnthropic {
-		res.Config.Effort = *effort
-	}
-	client, err := llm.New(res.Config)
-	if err != nil {
-		return err
-	}
-	fmt.Fprintf(a.out, "using %s: %s %s\n", res.Source, client.Provider(), client.Model())
 
 	x := &extract.Extractor{Store: st, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Log: a.out, Verbose: *verbose, MaxCalls: *maxCalls}
 	if res.Borrowed(user.ID) {
 		// Recheck before every call: the admin may revoke, and the cap
 		// may run out partway through a book.
 		x.Allow = func(ctx context.Context) error {
-			_, err := keys.Resolve(ctx, st, bx, user, env)
+			bx, err := box()
+			if err != nil {
+				return err
+			}
+			_, err = keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
 			return err
 		}
 	}
@@ -177,6 +165,31 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(a.out, "done: %d entities so far in %s (book id %d)\n", len(es), seriesName, book.ID)
 	return nil
+}
+
+// modelClient resolves which key user's model calls run on and opens a
+// client for it.
+func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, effort string) (llm.Client, keys.Resolved, error) {
+	bx, err := box()
+	if err != nil {
+		return nil, keys.Resolved{}, err
+	}
+	res, err := keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
+	if err != nil {
+		return nil, res, err
+	}
+	if model != "" {
+		res.Config.Model = model
+	}
+	if res.Config.Provider == llm.ProviderAnthropic {
+		res.Config.Effort = effort
+	}
+	client, err := llm.New(res.Config)
+	if err != nil {
+		return nil, res, err
+	}
+	fmt.Fprintf(a.out, "using %s: %s %s\n", res.Source, client.Provider(), client.Model())
+	return client, res, nil
 }
 
 type planned struct {
