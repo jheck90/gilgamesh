@@ -22,7 +22,8 @@ type known struct {
 //
 //   - Facts and aliases must cite sentences inside this chunk, so nothing
 //     lands before the reader could have read it.
-//   - An alias must appear verbatim in the sentence it cites.
+//   - An alias must appear verbatim in the passage, and is revealed no
+//     earlier than its first appearance or the sentence it cites.
 //   - A new entity's name must appear in the passage, so the model can't
 //     name someone by a name the book hasn't revealed yet.
 //   - A known entity only gets facts if one of its names already known to
@@ -60,11 +61,16 @@ func validate(out output, c chunk, k known) (store.ChunkWrite, []string) {
 		for _, a := range e.NewAliases {
 			alias := clean(a.Alias)
 			s, ok := c.sentence(a.Sentence)
-			if alias == "" || !ok || !text.ContainsName(s.Text, alias) {
-				warnf("%s: dropped alias %q: not in sentence %d", label, a.Alias, a.Sentence)
+			first, found := c.firstMention(alias)
+			if alias == "" || !ok || !found {
+				warnf("%s: dropped alias %q: not in this passage", label, a.Alias)
 				continue
 			}
-			aliases = append(aliases, store.AliasRec{Alias: alias, Ord: s.Ord})
+			// The model sometimes cites the wrong sentence. Dropping the
+			// alias would let a later passage mistake it for someone new,
+			// so reveal it once the reader has both seen the name and
+			// reached the sentence the model cited.
+			aliases = append(aliases, store.AliasRec{Alias: alias, Ord: max(s.Ord, first)})
 		}
 
 		id, isKnown := int64(0), false

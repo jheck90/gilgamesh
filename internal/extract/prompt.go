@@ -103,6 +103,14 @@ type output struct {
 	} `json:"time_markers"`
 }
 
+func (o output) facts() int {
+	n := 0
+	for _, e := range o.Entities {
+		n += len(e.Facts)
+	}
+	return n
+}
+
 // candidate is a known entity offered to the model for this chunk.
 type candidate struct {
 	store.EntitySummary

@@ -25,6 +25,7 @@ const (
 	maxCandidates     = 200
 	recentEntities    = 12
 	recentFacts       = 3
+	retryEmptyWords   = 300 // a reply with no facts for a passage this long gets one retry
 )
 
 type Extractor struct {
@@ -84,12 +85,22 @@ func (x *Extractor) Run(ctx context.Context, b store.Book) error {
 
 		var out output
 		var usage llm.Usage
-		for attempt := 1; ; attempt++ {
+		retriedGarbled, retriedEmpty := false, false
+		for {
 			raw, u, err := x.LLM.JSON(ctx, req)
 			usage.InputTokens += u.InputTokens
 			usage.OutputTokens += u.OutputTokens
 			if err == nil {
+				out = output{}
 				if err = json.Unmarshal(raw, &out); err == nil {
+					// Now and then a reply skips a whole passage, and asking
+					// again almost always fills it in. A real chapter with
+					// nothing new in it is rare enough that one retry is cheap.
+					if out.facts() == 0 && !retriedEmpty && c.words() >= retryEmptyWords {
+						retriedEmpty = true
+						x.logf("  chunk %d: reply had no facts; retrying\n", i+1)
+						continue
+					}
 					break
 				}
 				err = fmt.Errorf("reply wasn't valid JSON: %w", err)
@@ -97,10 +108,11 @@ func (x *Extractor) Run(ctx context.Context, b store.Book) error {
 			// The clients already retry rate limits and server errors, so
 			// only a garbled reply is worth asking for again.
 			var jsonErr *json.SyntaxError
-			if attempt == 2 || !errors.As(err, &jsonErr) {
+			if retriedGarbled || !errors.As(err, &jsonErr) {
 				x.saveUsage(ctx, b, usage)
 				return fmt.Errorf("extract: chunk %d/%d (%s): %w", i+1, len(chunks), c.Chapter.Title, err)
 			}
+			retriedGarbled = true
 			x.logf("  chunk %d: %v; retrying\n", i+1, err)
 		}
 

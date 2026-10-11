@@ -120,6 +120,34 @@ func TestBuildChunks(t *testing.T) {
 	}
 }
 
+func TestValidateMiscitedAlias(t *testing.T) {
+	c := chunk{Chapter: store.Chapter{Idx: 1, Title: "One"}, Part: 1, Parts: 1, Sentences: []store.Sentence{
+		{Ord: 10, Para: 1, Text: "A man in a hood waited by the stairs."},
+		{Ord: 11, Para: 1, Text: "Everyone called him Mordecai."},
+		{Ord: 12, Para: 2, Text: "The guide, as Carl thought of him, nodded."},
+	}}
+	out := parse(t, `{"entities": [{"entity_id": "", "name": "Mordecai", "type": "character", "is_narrator": false,
+		"new_aliases": [{"alias": "the guide", "sentence": 1}, {"alias": "a man in a hood", "sentence": 2}, {"alias": "Mordy", "sentence": 2}],
+		"facts": [{"text": "Mordecai waited by the stairs.", "sentences": [1, 2]}]}], "time_markers": []}`)
+
+	w, warns := validate(out, c, known{cands: map[int64]candidate{}, byName: map[string]int64{}})
+	if len(w.New) != 1 {
+		t.Fatalf("new entities = %+v", w.New)
+	}
+	got := map[string]int{}
+	for _, a := range w.New[0].Aliases {
+		got[a.Alias] = a.Ord
+	}
+	// Cited before it appears: revealed where it appears. Cited after it
+	// appears: revealed where the model said the link was made.
+	if len(got) != 2 || got["the guide"] != 12 || got["a man in a hood"] != 11 {
+		t.Errorf("aliases = %v, want the guide at 12 and a man in a hood at 11", got)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "Mordy") {
+		t.Errorf("warnings = %q, want one for Mordy, who isn't in the passage", warns)
+	}
+}
+
 type fakeLLM struct {
 	reply func(call int, req llm.Request) (string, error)
 	calls int
@@ -222,5 +250,51 @@ func TestRunResumesAndHidesTheFuture(t *testing.T) {
 	facts, _ := st.VisibleFacts(ctx, 1, store.At(b, 2), 0)
 	if len(facts) != 1 {
 		t.Errorf("at ord 2 Carl has %d facts, want 1 (the wave is revealed at ord 3)", len(facts))
+	}
+}
+
+func TestRunRetriesAnEmptyReply(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	u, _ := st.EnsureUser(ctx, "default")
+	sid, _ := st.EnsureSeries(ctx, "Saga")
+	chapters := []store.Chapter{{Idx: 1, Title: "One", FirstOrd: 0, LastOrd: 0}, {Idx: 2, Title: "Two", FirstOrd: 1, LastOrd: 1}}
+	sentences := []store.Sentence{
+		{Ord: 0, ChapterIdx: 1, Para: 0, Text: strings.Repeat("Carl walked on and on ", retryEmptyWords/5)},
+		{Ord: 1, ChapterIdx: 2, Para: 1, Text: "Carl slept."},
+	}
+	bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "Saga One", SHA256: "a", SourcePath: "a"},
+		chapters, sentences, CountChunks(chapters, sentences, 1000), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, _ := st.BookByID(ctx, bid)
+
+	empty := `{"entities": [], "time_markers": []}`
+	f := &fakeLLM{reply: func(call int, req llm.Request) (string, error) {
+		if call == 2 {
+			return `{"entities": [{"entity_id": "", "name": "Carl", "type": "character", "is_narrator": false, "new_aliases": [],
+				"facts": [{"text": "Carl walked a long way.", "sentences": [1]}]}], "time_markers": []}`, nil
+		}
+		return empty, nil
+	}}
+	x := &Extractor{Store: st, LLM: f, UserID: u.ID, KeyOwnerID: u.ID}
+	if err := x.Run(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	// The long chapter is asked twice; the one-sentence chapter is taken
+	// at its word.
+	if f.calls != 3 {
+		t.Errorf("made %d calls, want 3", f.calls)
+	}
+	if facts, _ := st.VisibleFacts(ctx, 1, store.At(b, 1), 0); len(facts) != 1 {
+		t.Errorf("Carl has %d facts, want the one from the retry", len(facts))
+	}
+	if used, _ := st.TokensThisMonth(ctx, u.ID); used != 330 {
+		t.Errorf("tokens recorded = %d, want 330 (the empty reply counts too)", used)
 	}
 }
