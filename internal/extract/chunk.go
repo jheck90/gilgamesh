@@ -17,6 +17,14 @@ type chunk struct {
 
 func (c chunk) firstOrd() int { return c.Sentences[0].Ord }
 
+func (c chunk) words() int {
+	n := 0
+	for _, s := range c.Sentences {
+		n += len(strings.Fields(s.Text))
+	}
+	return n
+}
+
 // sentence returns the sentence the model called number n.
 func (c chunk) sentence(n int) (store.Sentence, bool) {
 	if n < 1 || n > len(c.Sentences) {
