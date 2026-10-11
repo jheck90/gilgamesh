@@ -52,7 +52,10 @@ CREATE TABLE entities (
   type          TEXT    NOT NULL,
   narrator      INTEGER NOT NULL DEFAULT 0,
   first_book_id INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
-  first_ord     INTEGER NOT NULL
+  first_ord     INTEGER NOT NULL,
+  -- An alias to show as the entry's title once the reader reaches it,
+  -- when the first name learned isn't the one it's best known by.
+  title_alias_id INTEGER REFERENCES aliases(id) ON DELETE SET NULL
 );
 CREATE INDEX entities_series ON entities(series_id);
 

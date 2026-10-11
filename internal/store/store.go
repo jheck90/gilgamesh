@@ -18,10 +18,11 @@ var schema string
 // schemaVersion is the version schema.sql creates. Each entry in
 // migrations takes an existing database up one version, so migrations[0]
 // goes from 1 to 2.
-const schemaVersion = 2
+const schemaVersion = 3
 
 var migrations = []string{
 	editsTable,
+	"ALTER TABLE entities ADD COLUMN title_alias_id INTEGER REFERENCES aliases(id) ON DELETE SET NULL",
 }
 
 const editsTable = `CREATE TABLE edits (

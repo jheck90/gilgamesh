@@ -154,6 +154,7 @@ type Edit struct {
 	SeriesID    int64
 	CategoryMap map[string]string // old category -> existing category, series-wide
 	Merges      []Merge
+	Titles      []Title
 	DropEntity  []int64
 	DropAlias   []int64
 	DropFact    []int64
@@ -174,8 +175,14 @@ type Merge struct {
 	From []int64
 }
 
+// Title shows Entity by one of its own aliases from the point that alias
+// is revealed.
+type Title struct {
+	Entity, Alias int64
+}
+
 type EditStats struct {
-	Retyped, Merged, Entities, Aliases, Facts, Markers int
+	Retyped, Merged, Titled, Entities, Aliases, Facts, Markers int
 }
 
 // ApplyEdit applies e in one transaction. Drops are limited to rows from
@@ -208,6 +215,12 @@ func (s *Store) ApplyEdit(ctx context.Context, e Edit) (EditStats, error) {
 				return st, err
 			}
 			st.Merged++
+		}
+	}
+	for _, t := range e.Titles {
+		if err := exec(&st.Titled, `UPDATE entities SET title_alias_id = ? WHERE id = ? AND series_id = ?
+			AND EXISTS (SELECT 1 FROM aliases WHERE id = ? AND entity_id = ?)`, t.Alias, t.Entity, e.SeriesID, t.Alias, t.Entity); err != nil {
+			return st, err
 		}
 	}
 	for _, id := range e.DropEntity {

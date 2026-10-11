@@ -14,6 +14,7 @@ Tidy the notes. You can only remove and combine; you cannot write anything new. 
 
 - category_map: fold a category into a more common one that means the same (for example creature into species). Map only to a category already in use, and leave the main categories alone.
 - merges: entities that are the same thing noted twice under forms of one name (the Iron Guild and Iron Guild; Rhee and Captain Ada Rhee). Each entity merged away must share a name word with the one it joins. Merge only when the notes make it plain: people who share a surname are often different people, and a name reused across generations belongs to a different individual.
+- titles: an entry is titled by the first name the reader learned, which is sometimes a poor title: a description ("the coachman", "the murderer") for someone later named, or a name cluttered with honours or degrees. Pick one of the entry's own aliases (by its A ID) as a better title. It is only shown once the reader reaches that alias, so choose the name the entry is best known by.
 - drop_entities: entries no reader would look up: incidental objects, scenery, unnamed walk-ons, a single moment. Keep anything named that a reader might wonder about, anything that recurs, and anything that matters to the story. Entities with more than 5 facts can't be dropped.
 - drop_facts: an entry is a reference card, not a retelling of the plot. Keep what a reader would come back for: who or what it is, role and status, relationships, abilities and traits, beliefs and goals, and turning points that change its situation (captured, freed, maimed, promoted, killed, changed sides). Drop scene-level narration: single actions and reactions within a scene, passing injuries, movements, things said or asked in passing, and anything that repeats an earlier fact on the same entry (keep the earlier one). Long entries are usually mostly scene-level narration, so expect to drop many of their facts.
 - drop_aliases: names attached to the wrong entity.
@@ -24,12 +25,13 @@ When unsure whether to drop an entity or merge two, keep them as they are. A sho
 var outputSchema = map[string]any{
 	"type":                 "object",
 	"additionalProperties": false,
-	"required":             []string{"category_map", "merges", "drop_entities", "drop_aliases", "drop_facts", "drop_markers"},
+	"required":             []string{"category_map", "merges", "titles", "drop_entities", "drop_aliases", "drop_facts", "drop_markers"},
 	"properties": map[string]any{
 		"category_map": array(object(map[string]any{"from": str, "to": str})),
 		"merges": array(object(map[string]any{
 			"keep": str, "merge": map[string]any{"type": "array", "items": str}, "reason": str,
 		})),
+		"titles":        array(object(map[string]any{"id": str, "alias": str})),
 		"drop_entities": array(object(map[string]any{"id": str, "reason": str})),
 		"drop_aliases":  array(object(map[string]any{"id": str, "reason": str})),
 		"drop_facts":    map[string]any{"type": "array", "items": str},
@@ -63,6 +65,10 @@ type reply struct {
 		Merge  []string `json:"merge"`
 		Reason string   `json:"reason"`
 	} `json:"merges"`
+	Titles []struct {
+		ID    string `json:"id"`
+		Alias string `json:"alias"`
+	} `json:"titles"`
 	DropEntities []struct {
 		ID     string `json:"id"`
 		Reason string `json:"reason"`

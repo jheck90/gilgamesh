@@ -40,6 +40,7 @@ type Plan struct {
 	Edit     store.Edit
 	Retype   []string
 	Merges   []string
+	Titles   []string
 	Entities []string
 	Aliases  []string
 	Facts    []string
@@ -178,6 +179,34 @@ func Check(n store.Notes, raw []byte) (Plan, error) {
 			dropped[e.ID] = true
 			p.Edit.DropEntity = append(p.Edit.DropEntity, e.ID)
 			p.Entities = append(p.Entities, fmt.Sprintf("%s [%s] (%d facts): %s", e.Name, e.Type, len(e.Facts), d.Reason))
+		}
+	}
+
+	// Titles come after drops are known, so a title can't be an alias
+	// that's being removed or belong to an entry that's going away.
+	droppingAlias := map[int64]bool{}
+	for _, d := range r.DropAliases {
+		id, _ := parseID(d.ID, 'A')
+		droppingAlias[id] = true
+	}
+	titled := map[int64]bool{}
+	for _, t := range r.Titles {
+		e, found := entity(t.ID)
+		aid, _ := parseID(t.Alias, 'A')
+		a, aliasFound := aliases[aid]
+		switch {
+		case !found || !aliasFound:
+			reject("title %s for %s: unknown", t.Alias, t.ID)
+		case dropped[e.ID] || into[e.ID] != 0:
+			reject("title for %s: it's being dropped or merged away", e.Name)
+		case a.e.ID != e.ID && into[a.e.ID] != e.ID:
+			reject("title %q for %s: that name belongs to %s", a.a.Alias, e.Name, a.e.Name)
+		case droppingAlias[aid]:
+			reject("title %q for %s: that alias is being dropped", a.a.Alias, e.Name)
+		case !titled[e.ID]:
+			titled[e.ID] = true
+			p.Edit.Titles = append(p.Edit.Titles, store.Title{Entity: e.ID, Alias: aid})
+			p.Titles = append(p.Titles, fmt.Sprintf("%s → %s (from %s)", e.Name, a.a.Alias, ch(a.a.Ord)))
 		}
 	}
 

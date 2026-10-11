@@ -52,6 +52,8 @@ func TestCheck(t *testing.T) {
 			{"keep": "E13", "merge": ["E14"], "reason": "same virus"},
 			{"keep": "E16", "merge": ["E15"], "reason": "Eliza's persona"}
 		],
+		"titles": [{"id": "E1", "alias": "A1"}, {"id": "E1", "alias": "A2"}, {"id": "E7", "alias": "A2"},
+			{"id": "E6", "alias": "A1"}, {"id": "E2", "alias": "A1"}],
 		"drop_entities": [{"id": "E6", "reason": "scenery"}, {"id": "E9", "reason": "x"}, {"id": "E8", "reason": "x"},
 			{"id": "E7", "reason": "x"}, {"id": "E1", "reason": "x"}],
 		"drop_aliases": [{"id": "A2", "reason": "wrong entity"}, {"id": "A3", "reason": "x"}],
@@ -74,6 +76,11 @@ func TestCheck(t *testing.T) {
 	if !reflect.DeepEqual(e.Merges, []store.Merge{{Into: 1, From: []int64{2}}, {Into: 16, From: []int64{15}}}) {
 		t.Errorf("merges = %+v", e.Merges)
 	}
+	// Only Vrie Guyen's own alias can title him; Holsten's is being
+	// dropped, the armour is going, and Guyen is merged away.
+	if !reflect.DeepEqual(e.Titles, []store.Title{{Entity: 1, Alias: 1}}) {
+		t.Errorf("titles = %+v", e.Titles)
+	}
 	if !reflect.DeepEqual(e.DropEntity, []int64{6}) {
 		t.Errorf("dropped entities = %v, want only the armour", e.DropEntity)
 	}
@@ -91,10 +98,10 @@ func TestCheck(t *testing.T) {
 		t.Errorf("merge description = %q", p.Merges)
 	}
 	// bogus category, Mordecai, Isa Lain, the satellite, uplift
-	// nanovirus, Big Thing, narrator, Holsten, Vrie Guyen (in a merge),
-	// the old alias, F99, Lone's first fact.
-	if len(p.Rejected) != 12 {
-		t.Errorf("%d rejected, want 12:\n%s", len(p.Rejected), strings.Join(p.Rejected, "\n"))
+	// nanovirus, four titles, Big Thing, narrator, Holsten, Vrie Guyen
+	// (in a merge), the old alias, F99, Lone's first fact.
+	if len(p.Rejected) != 16 {
+		t.Errorf("%d rejected, want 16:\n%s", len(p.Rejected), strings.Join(p.Rejected, "\n"))
 	}
 }
 
