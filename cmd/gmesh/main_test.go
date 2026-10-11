@@ -155,6 +155,10 @@ func TestEndToEnd(t *testing.T) {
 	if editCalls != 1 {
 		t.Errorf("the model was asked to edit %d times, want 1", editCalls)
 	}
+	if _, err := gm("edit", "crawl", "--from", plan); err == nil || !strings.Contains(err.Error(), "already edited") {
+		t.Errorf("a second edit should need --again, got %v", err)
+	}
+	mustRun("edit", "crawl", "--from", plan, "--again")
 
 	// A second reader starts with no position, and can't spend a key
 	// without asking.

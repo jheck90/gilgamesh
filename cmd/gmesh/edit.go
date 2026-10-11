@@ -21,6 +21,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 	save := fs.String("save", "", "also write the model's reply to FILE, to apply later with --from")
 	from := fs.String("from", "", "apply a reply saved with --save instead of asking the model again")
 	verbose := fs.Bool("v", false, "list every fact and time marker dropped")
+	again := fs.Bool("again", false, "edit a book that has been edited before (each edit trims more)")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -45,6 +46,11 @@ func (a *app) edit(ctx context.Context, args []string) error {
 	} else if !p.Done() {
 		return fmt.Errorf("%s isn't fully read yet (%d of %d calls); finish `gmesh ingest` first", book.Title, p.NextChunk, p.TotalChunks)
 	}
+	if at, edited, err := st.LastEdit(ctx, book.ID); err != nil {
+		return err
+	} else if edited && !*again {
+		return fmt.Errorf("%s was already edited (%s UTC); each edit trims more, so add --again if you mean it", book.Title, at)
+	}
 	notes, err := st.BookNotes(ctx, book)
 	if err != nil {
 		return err
@@ -56,6 +62,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 
 	var raw []byte
 	var usage *store.UsageRec
+	planner := "saved plan " + *from
 	if *from != "" {
 		if raw, err = os.ReadFile(*from); err != nil {
 			return err
@@ -71,6 +78,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		raw, used, err = (&edit.Editor{LLM: client}).Ask(ctx, notes)
 		usage = &store.UsageRec{UserID: user.ID, KeyOwnerID: res.OwnerID, Provider: client.Provider(), Model: client.Model(),
 			InputTokens: used.InputTokens, OutputTokens: used.OutputTokens}
+		planner = client.Model()
 		if err != nil {
 			a.recordUsage(ctx, st, book, usage)
 			return err
@@ -89,6 +97,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		return err
 	}
 	plan.Edit.Usage = usage
+	plan.Edit.Model = planner
 	a.showPlan(plan, nFacts, len(notes.Markers), *verbose)
 
 	if *dry {
@@ -96,7 +105,14 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.out, "dry run: nothing changed")
 		return nil
 	}
-	backup := fmt.Sprintf("%s.before-edit-%d-%s", a.dbPath, book.ID, time.Now().Format("20060102-150405"))
+	base := fmt.Sprintf("%s.before-edit-%d-%s", a.dbPath, book.ID, time.Now().Format("20060102-150405"))
+	backup := base
+	for i := 2; ; i++ {
+		if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		backup = fmt.Sprintf("%s-%d", base, i)
+	}
 	if err := st.Backup(ctx, backup); err != nil {
 		return fmt.Errorf("backing up before the edit: %w", err)
 	}

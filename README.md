@@ -49,7 +49,8 @@ only remove and combine, never write, and the code checks every change:
 - **The database is backed up** before anything changes.
 
 Use `--dry-run --save plan.json` to review, then `--from plan.json` to apply
-that same plan without asking the model again.
+that same plan without asking the model again. Each edit trims more, so a
+book that has been edited once needs `--again` to be edited again.
 
 ## Quick start
 
