@@ -141,9 +141,9 @@ func (x *Extractor) Run(ctx context.Context, b store.Book) error {
 }
 
 // knownAt gathers what a reader knows at the start of chunk c: the
-// candidates to offer the model (entities named in the chunk, the
-// narrator, and whoever was active most recently) and a name index over
-// every visible entity.
+// candidates to offer the model (entities named in the chunk, in full or
+// in part, the narrator, and whoever was active most recently) and a name
+// index over every visible entity.
 func (x *Extractor) knownAt(ctx context.Context, b store.Book, c chunk) (known, []candidate, []string, error) {
 	pos := store.At(b, c.firstOrd()-1)
 	all, err := x.Store.VisibleEntities(ctx, pos)
@@ -154,9 +154,9 @@ func (x *Extractor) knownAt(ctx context.Context, b store.Book, c chunk) (known, 
 	typeSet := map[string]bool{}
 	for _, e := range all {
 		typeSet[e.Type] = true
-		k.byName[text.Fold(e.Name)] = e.ID
+		k.byName[text.Key(e.Name)] = e.ID
 		for _, a := range e.Aliases {
-			k.byName[text.Fold(a)] = e.ID
+			k.byName[text.Key(a)] = e.ID
 		}
 	}
 
@@ -171,6 +171,17 @@ func (x *Extractor) knownAt(ctx context.Context, b store.Book, c chunk) (known, 
 	for _, e := range all {
 		if e.Narrator || c.mentionsAny(append([]string{e.Name}, e.Aliases...)) {
 			pick(e)
+		}
+	}
+	// A passage often uses part of a name ("Guyen" for "Vrie Guyen"). If
+	// that entity isn't offered, the model can only start a new one.
+	passage := c.text()
+	for _, e := range all {
+		for _, w := range text.NameWords(append([]string{e.Name}, e.Aliases...)...) {
+			if text.ContainsWord(passage, w) {
+				pick(e)
+				break
+			}
 		}
 	}
 	for _, e := range store.MostRecent(all, recentEntities) {

@@ -13,7 +13,7 @@ import (
 // before this chunk.
 type known struct {
 	cands  map[int64]candidate // offered to the model this chunk
-	byName map[string]int64    // folded name or alias -> id, all visible entities
+	byName map[string]int64    // text.Key of a name or alias -> id, all visible entities
 }
 
 // validate turns model output into rows, dropping anything the passage
@@ -81,7 +81,7 @@ func validate(out output, c chunk, k known) (store.ChunkWrite, []string) {
 				continue
 			}
 			id, isKnown = n, true
-		} else if n, ok := k.byName[text.Fold(e.Name)]; ok {
+		} else if n, ok := k.byName[text.Key(e.Name)]; ok {
 			id, isKnown = n, true // the model didn't spot a known name
 		}
 
@@ -125,7 +125,7 @@ func validate(out output, c chunk, k known) (store.ChunkWrite, []string) {
 		if len(facts) == 0 && len(aliases) == 0 {
 			continue
 		}
-		key := text.Fold(name)
+		key := text.Key(name)
 		ne, ok := news[key]
 		if !ok {
 			ne = &store.NewEntity{Name: name, Type: normType(e.Type), Narrator: e.IsNarrator, FirstOrd: first}
@@ -181,7 +181,10 @@ func (c chunk) ords(nums []int) ([]int, bool) {
 	return out, true
 }
 
+// firstMention finds where name first appears, ignoring a leading "the",
+// so "the ants" is found in "Ants swarmed".
 func (c chunk) firstMention(name string) (int, bool) {
+	name = text.Key(name)
 	for _, s := range c.Sentences {
 		if text.ContainsName(s.Text, name) {
 			return s.Ord, true

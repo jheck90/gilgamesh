@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -296,5 +297,88 @@ func TestRunRetriesAnEmptyReply(t *testing.T) {
 	}
 	if used, _ := st.TokensThisMonth(ctx, u.ID); used != 330 {
 		t.Errorf("tokens recorded = %d, want 330 (the empty reply counts too)", used)
+	}
+}
+
+func TestKnownAtOffersPartialNames(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "x.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	sid, _ := st.EnsureSeries(ctx, "Saga")
+	chapters := []store.Chapter{{Idx: 1, Title: "One", FirstOrd: 0, LastOrd: 19}, {Idx: 2, Title: "Two", FirstOrd: 20, LastOrd: 21}}
+	var sentences []store.Sentence
+	for i := 0; i < 20; i++ {
+		sentences = append(sentences, store.Sentence{Ord: i, ChapterIdx: 1, Para: i, Text: "Someone spoke."})
+	}
+	sentences = append(sentences,
+		store.Sentence{Ord: 20, ChapterIdx: 2, Para: 20, Text: "Guyen gave the order."},
+		store.Sentence{Ord: 21, ChapterIdx: 2, Para: 21, Text: "The old sword had lain there for years."})
+	bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "Saga One", SHA256: "a", SourcePath: "a"},
+		chapters, sentences, CountChunks(chapters, sentences, 1000), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, _ := st.BookByID(ctx, bid)
+
+	// Guyen and Lain are met first, then enough others that neither is
+	// among the most recently active.
+	news := []store.NewEntity{
+		{Name: "Vrie Guyen", Type: "character", FirstOrd: 0, Facts: []store.FactRec{{Text: "Vrie Guyen commands the ship.", Ord: 0, Evidence: []int{0}}}},
+		{Name: "Isa Lain", Type: "character", FirstOrd: 1, Facts: []store.FactRec{{Text: "Isa Lain is an engineer.", Ord: 1, Evidence: []int{1}}}},
+	}
+	for i := 0; i < recentEntities+1; i++ {
+		news = append(news, store.NewEntity{Name: fmt.Sprintf("Crew %d", i), Type: "character", FirstOrd: 2 + i,
+			Facts: []store.FactRec{{Text: "A crew member.", Ord: 2 + i, Evidence: []int{2 + i}}}})
+	}
+	if _, err := st.ApplyChunk(ctx, store.ChunkWrite{BookID: b.ID, SeriesID: sid, NextChunk: 1, New: news}); err != nil {
+		t.Fatal(err)
+	}
+
+	chunks := buildChunks(chapters, sentences, 1000)
+	x := &Extractor{Store: st}
+	k, cands, _, err := x.knownAt(ctx, b, chunks[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var offered []string
+	for _, c := range cands {
+		offered = append(offered, c.Name)
+	}
+	if _, ok := k.cands[1]; !ok {
+		t.Errorf("Vrie Guyen wasn't offered for a passage that says Guyen; offered %q", offered)
+	}
+	if _, ok := k.cands[2]; ok {
+		t.Errorf("Isa Lain was offered for a passage that only says lain; offered %q", offered)
+	}
+}
+
+func TestValidateIgnoresLeadingThe(t *testing.T) {
+	c := chunk{Chapter: store.Chapter{Idx: 1, Title: "One"}, Part: 1, Parts: 1, Sentences: []store.Sentence{
+		{Ord: 5, Para: 1, Text: "Ants swarmed the walls."},
+		{Ord: 6, Para: 1, Text: "The drones fired."},
+		{Ord: 7, Para: 2, Text: "Drones were cheap."},
+	}}
+	k := known{cands: map[int64]candidate{}, byName: map[string]int64{"ants": 9}}
+	out := parse(t, `{"entities": [
+		{"entity_id": "", "name": "the ants", "type": "species", "is_narrator": false, "new_aliases": [],
+		 "facts": [{"text": "The ants swarmed the walls.", "sentences": [1]}]},
+		{"entity_id": "", "name": "the drones", "type": "item", "is_narrator": false, "new_aliases": [],
+		 "facts": [{"text": "The drones fired.", "sentences": [2]}]},
+		{"entity_id": "", "name": "Drones", "type": "item", "is_narrator": false, "new_aliases": [],
+		 "facts": [{"text": "Drones were cheap.", "sentences": [3]}]}
+	], "time_markers": []}`)
+
+	w, warns := validate(out, c, k)
+	if len(w.Updates) != 1 || w.Updates[0].ID != 9 {
+		t.Errorf("updates = %+v, want the ants filed under the known ants", w.Updates)
+	}
+	if len(w.New) != 1 || len(w.New[0].Facts) != 2 || w.New[0].FirstOrd != 6 {
+		t.Errorf("new = %+v, want one drones entity first seen at 6 with both facts", w.New)
+	}
+	if len(warns) != 0 {
+		t.Errorf("warnings = %q", warns)
 	}
 }
