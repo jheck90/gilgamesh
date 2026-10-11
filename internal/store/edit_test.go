@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -197,18 +199,26 @@ func TestEditsAreRecorded(t *testing.T) {
 }
 
 func TestMigrateFromV1(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	s, err := Open(path)
+	// A database as the first release created it, with a book in it.
+	v1, err := os.ReadFile("testdata/schema_v1.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Make it look like a database from before the edits table.
-	if _, err := s.db.Exec("DROP TABLE edits; PRAGMA user_version = 1"); err != nil {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	s.Close()
+	if _, err := db.Exec(string(v1) + `; PRAGMA user_version = 1;
+		INSERT INTO series (id, name) VALUES (1, 'Saga');
+		INSERT INTO books (id, series_id, title, source_path, sha256) VALUES (1, 1, 'One', 'one.epub', 'x');
+		INSERT INTO entities (id, series_id, name, type, first_book_id, first_ord) VALUES (1, 1, 'the coachman', 'character', 1, 5);
+		INSERT INTO aliases (entity_id, alias, book_id, revealed_ord) VALUES (1, 'Williams', 1, 9);`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
 
-	s, err = Open(path)
+	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +228,73 @@ func TestMigrateFromV1(t *testing.T) {
 	if v != schemaVersion {
 		t.Errorf("version = %d, want %d", v, schemaVersion)
 	}
-	if _, _, err := s.LastEdit(context.Background(), 1); err != nil {
+	ctx := context.Background()
+	if _, _, err := s.LastEdit(ctx, 1); err != nil {
 		t.Errorf("edits table missing after migrating: %v", err)
+	}
+	b, _, err := s.BookByID(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	es, err := s.VisibleEntities(ctx, At(b, 9))
+	if err != nil || len(es) != 1 || es[0].Name != "Williams" {
+		t.Errorf("after migrating: %+v, %v; want the coachman shown as Williams", es, err)
+	}
+}
+
+func TestTitles(t *testing.T) {
+	s, ctx := open(t), context.Background()
+	sid, _ := s.EnsureSeries(ctx, "Saga")
+	b := addBook(t, s, sid, 1, "One", 100)
+	if _, err := s.ApplyChunk(ctx, ChunkWrite{BookID: b.ID, SeriesID: sid, NextChunk: 1, New: []NewEntity{
+		{Name: "the murderer", Type: "character", FirstOrd: 10, Aliases: []AliasRec{
+			{Alias: "Square-toes", Ord: 20}, {Alias: "the cabman", Ord: 30}, {Alias: "Jefferson Hope", Ord: 40}}},
+		{Name: "Henry Jekyll, M.D., F.R.S.", Type: "character", FirstOrd: 12, Aliases: []AliasRec{{Alias: "Dr. Jekyll", Ord: 12}}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	n := ids(t, s, b)
+	murderer, jekyll := n["the murderer"], n["Henry Jekyll, M.D., F.R.S."]
+	name := func(ord int, id int64) (string, []string) {
+		t.Helper()
+		es, err := s.VisibleEntities(ctx, At(b, ord))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range es {
+			if e.ID == id {
+				return e.Name, e.Aliases
+			}
+		}
+		return "", nil
+	}
+
+	// A description gives way to the first proper name the reader learns.
+	for ord, want := range map[int]string{15: "the murderer", 25: "Square-toes", 45: "Square-toes"} {
+		if got, _ := name(ord, murderer.ID); got != want {
+			t.Errorf("at %d the murderer is titled %q, want %q", ord, got, want)
+		}
+	}
+
+	hope, drJekyll := murderer.Aliases[2].ID, jekyll.Aliases[0].ID
+	st, err := s.ApplyEdit(ctx, Edit{BookID: b.ID, SeriesID: sid, Titles: []Title{
+		{Entity: murderer.ID, Alias: hope}, {Entity: jekyll.ID, Alias: drJekyll}, {Entity: jekyll.ID, Alias: hope}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Titled != 2 {
+		t.Errorf("titled %d, want 2 (an alias of another entry can't be a title)", st.Titled)
+	}
+	// The chosen title waits for its own reveal.
+	for ord, want := range map[int]string{25: "Square-toes", 39: "Square-toes", 40: "Jefferson Hope"} {
+		if got, _ := name(ord, murderer.ID); got != want {
+			t.Errorf("at %d the murderer is titled %q, want %q", ord, got, want)
+		}
+	}
+	if got, aliases := name(40, murderer.ID); got != "Jefferson Hope" || len(aliases) != 3 || aliases[0] != "the murderer" {
+		t.Errorf("at 40: %q also %q", got, aliases)
+	}
+	if got, aliases := name(12, jekyll.ID); got != "Dr. Jekyll" || len(aliases) != 1 {
+		t.Errorf("Jekyll at 12: %q also %q", got, aliases)
 	}
 }

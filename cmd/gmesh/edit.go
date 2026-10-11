@@ -120,8 +120,8 @@ func (a *app) edit(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.out, "done: %d entities merged, %d dropped, %d aliases, %d facts and %d time markers dropped, %d entities recategorized\n",
-		s.Merged, s.Entities, s.Aliases, s.Facts, s.Markers, s.Retyped)
+	fmt.Fprintf(a.out, "done: %d entities merged, %d retitled, %d dropped, %d aliases, %d facts and %d time markers dropped, %d entities recategorized\n",
+		s.Merged, s.Titled, s.Entities, s.Aliases, s.Facts, s.Markers, s.Retyped)
 	fmt.Fprintf(a.out, "the database before this edit is in %s\n", backup)
 	return nil
 }
@@ -156,6 +156,7 @@ func (a *app) showPlan(p edit.Plan, nFacts, nMarkers int, verbose bool) {
 	}
 	list("Categories folded", p.Retype, 0)
 	list("Merges", p.Merges, 0)
+	list("Titles", p.Titles, 0)
 	list("Entities dropped", p.Entities, 0)
 	list("Aliases dropped", p.Aliases, 0)
 	list(fmt.Sprintf("Facts dropped, of %d", nFacts), p.Facts, limit)

@@ -16,7 +16,7 @@ Rules:
 - Record only what is new. Skip anything already covered by the facts listed for a known entity, and skip trivial moments (walking, glancing, small talk) unless they change who someone is or what happened to them. Favor the details a reader would want back if they forgot who this was.
 - Every fact lists the numbers of the sentences that support it.
 - entity_id: the ID from KNOWN ENTITIES (like "E12") when the passage refers to that entity; an empty string for anything not in the list. Treat two names as the same entity only when the text itself makes that clear.
-- name: for a new entity, the name as the passage writes it (the fullest form used). If the text hasn't named them, use the exact phrase it uses for them, like "the captain" or "my father". For a known entity, repeat its listed name.
+- name: for a new entity, the name as the passage writes it (the fullest form used, but without honours or degrees after it, like "M.D." or "F.R.S."). If the text hasn't named them, use the exact phrase it uses for them, like "the captain" or "my father". For a known entity, repeat its listed name.
 - new_aliases: other names, titles or nicknames the passage uses for the entity, each with the number of a sentence where that exact wording appears. Only when the text makes clear it is the same entity.
 - is_narrator: true only for a first-person narrator. If the narrator's name hasn't appeared in the text yet, name them "Narrator".
 - type: a short lowercase category such as character, organization, place, item, creature, species, event or term. Reuse the categories already in use where they fit.

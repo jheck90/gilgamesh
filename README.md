@@ -44,6 +44,10 @@ only remove and combine, never write, and the code checks every change:
 - **Merges need a shared name word** the reader has already seen, so a twist
   ("the hooded man was Mordecai") can't be merged. A merged card keeps its
   first appearance, and nothing folded into it shows earlier than it did.
+- **Titles come from the entry's own names** and only show once the reader
+  reaches that name, so "the murderer" becomes his real name at the reveal,
+  not before. Without an edit, an entry first noted by a description takes
+  the first proper name revealed for it.
 - **Drops stay inside the book being edited,** never touch the narrator, and
   can't remove an entity with more than 5 facts.
 - **The database is backed up** before anything changes.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"unicode"
 )
 
 // Position is a point in a series' reading order: everything in earlier
@@ -42,13 +43,15 @@ type EntitySummary struct {
 	FirstOrd    int
 	Facts       int
 	lastSeen    float64
+	titleAlias  int64
+	aliasIDs    []int64 // parallel to Aliases
 }
 
 // VisibleEntities lists the entities a reader at pos has met, with only the
 // aliases revealed by then, in order of first appearance.
 func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySummary, error) {
 	where, args := visible(pos, "b", "e.first_ord")
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.name, e.type, e.narrator, e.first_book_id, e.first_ord
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.name, e.type, e.narrator, e.first_book_id, e.first_ord, COALESCE(e.title_alias_id, 0)
 		FROM entities e JOIN books b ON b.id = e.first_book_id
 		WHERE `+where+` ORDER BY b.series_index, e.first_ord, e.id`, args...)
 	if err != nil {
@@ -58,7 +61,7 @@ func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySumm
 	idx := map[int64]int{}
 	for rows.Next() {
 		var e EntitySummary
-		if err := rows.Scan(&e.ID, &e.Name, &e.Type, &e.Narrator, &e.FirstBookID, &e.FirstOrd); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Type, &e.Narrator, &e.FirstBookID, &e.FirstOrd, &e.titleAlias); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -71,20 +74,21 @@ func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySumm
 	}
 
 	where, args = visible(pos, "b", "a.revealed_ord")
-	rows, err = s.db.QueryContext(ctx, `SELECT a.entity_id, a.alias FROM aliases a JOIN books b ON b.id = a.book_id
+	rows, err = s.db.QueryContext(ctx, `SELECT a.id, a.entity_id, a.alias FROM aliases a JOIN books b ON b.id = a.book_id
 		WHERE `+where+` ORDER BY b.series_index, a.revealed_ord, a.id`, args...)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
-		var id int64
+		var aid, id int64
 		var alias string
-		if err := rows.Scan(&id, &alias); err != nil {
+		if err := rows.Scan(&aid, &id, &alias); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		if i, ok := idx[id]; ok {
 			out[i].Aliases = append(out[i].Aliases, alias)
+			out[i].aliasIDs = append(out[i].aliasIDs, aid)
 		}
 	}
 	rows.Close()
@@ -92,12 +96,8 @@ func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySumm
 		return nil, err
 	}
 
-	// A first-person narrator starts out as "Narrator"; once their name is
-	// revealed, show them by it.
 	for i := range out {
-		if e := &out[i]; e.Narrator && e.Name == NarratorName && len(e.Aliases) > 0 {
-			e.Name, e.Aliases = e.Aliases[0], e.Aliases[1:]
-		}
+		retitle(&out[i])
 	}
 
 	where, args = visible(pos, "b", "f.revealed_ord")
@@ -119,6 +119,62 @@ func (s *Store) VisibleEntities(ctx context.Context, pos Position) ([]EntitySumm
 		}
 	}
 	return out, rows.Err()
+}
+
+// retitle shows an entry by the name the reader knows it best by, among the
+// names already revealed: the title chosen for it once that alias is
+// revealed, or else, for an entry first noted by a description ("the
+// coachman", or a narrator's placeholder), the first proper name revealed.
+func retitle(e *EntitySummary) {
+	pick := -1
+	for j, id := range e.aliasIDs {
+		if id == e.titleAlias {
+			pick = j
+		}
+	}
+	placeholder := e.Narrator && e.Name == NarratorName
+	if pick < 0 && (placeholder || startsLower(e.Name)) {
+		for j, a := range e.Aliases {
+			if properName(a) {
+				pick = j
+				break
+			}
+		}
+	}
+	if pick < 0 {
+		return
+	}
+	rest := make([]string, 0, len(e.Aliases))
+	if !placeholder {
+		rest = append(rest, e.Name)
+	}
+	rest = append(rest, e.Aliases[:pick]...)
+	rest = append(rest, e.Aliases[pick+1:]...)
+	e.Name, e.Aliases = e.Aliases[pick], rest
+}
+
+func startsLower(s string) bool {
+	for _, r := range s {
+		return unicode.IsLower(r)
+	}
+	return false
+}
+
+// properName reports whether a name looks like a name rather than a
+// description: capitalized, and not "The ..." or "A ...".
+func properName(s string) bool {
+	for _, r := range s {
+		if !unicode.IsUpper(r) {
+			return false
+		}
+		break
+	}
+	first, _, _ := strings.Cut(s, " ")
+	switch first {
+	case "The", "A", "An":
+		return false
+	}
+	return s != ""
 }
 
 // MostRecent returns up to n entities with the latest visible facts.
