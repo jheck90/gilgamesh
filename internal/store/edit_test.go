@@ -175,3 +175,50 @@ func TestApplyEditDropsStayInBook(t *testing.T) {
 		t.Errorf("backup has %d entities, want 3", len(got))
 	}
 }
+
+func TestEditsAreRecorded(t *testing.T) {
+	s, ctx := open(t), context.Background()
+	sid, _ := s.EnsureSeries(ctx, "Saga")
+	b := addBook(t, s, sid, 1, "One", 10)
+	u, _ := s.EnsureUser(ctx, "default")
+	usageOnly := Edit{BookID: b.ID, SeriesID: sid, Usage: &UsageRec{UserID: u.ID, KeyOwnerID: u.ID, Provider: "x", Model: "m"}}
+	if _, err := s.ApplyEdit(ctx, usageOnly); err != nil {
+		t.Fatal(err)
+	}
+	if _, edited, err := s.LastEdit(ctx, b.ID); err != nil || edited {
+		t.Errorf("recording usage counted as an edit: %v %v", edited, err)
+	}
+	if _, err := s.ApplyEdit(ctx, Edit{BookID: b.ID, SeriesID: sid, Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if at, edited, err := s.LastEdit(ctx, b.ID); err != nil || !edited || at == "" {
+		t.Errorf("LastEdit = %q %v %v, want a time", at, edited, err)
+	}
+}
+
+func TestMigrateFromV1(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Make it look like a database from before the edits table.
+	if _, err := s.db.Exec("DROP TABLE edits; PRAGMA user_version = 1"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var v int
+	s.db.QueryRow("PRAGMA user_version").Scan(&v)
+	if v != schemaVersion {
+		t.Errorf("version = %d, want %d", v, schemaVersion)
+	}
+	if _, _, err := s.LastEdit(context.Background(), 1); err != nil {
+		t.Errorf("edits table missing after migrating: %v", err)
+	}
+}

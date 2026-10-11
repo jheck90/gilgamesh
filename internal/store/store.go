@@ -15,7 +15,21 @@ import (
 //go:embed schema.sql
 var schema string
 
-const schemaVersion = 1
+// schemaVersion is the version schema.sql creates. Each entry in
+// migrations takes an existing database up one version, so migrations[0]
+// goes from 1 to 2.
+const schemaVersion = 2
+
+var migrations = []string{
+	editsTable,
+}
+
+const editsTable = `CREATE TABLE edits (
+  id         INTEGER PRIMARY KEY,
+  book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  model      TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
 
 type Store struct {
 	db *sql.DB
@@ -55,8 +69,16 @@ func (s *Store) migrate() error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(schema); err != nil {
-		return fmt.Errorf("store: create schema: %w", err)
+	if v == 0 {
+		if _, err := tx.Exec(schema); err != nil {
+			return fmt.Errorf("store: create schema: %w", err)
+		}
+	} else {
+		for i := v; i < schemaVersion; i++ {
+			if _, err := tx.Exec(migrations[i-1]); err != nil {
+				return fmt.Errorf("store: migrate to v%d: %w", i+1, err)
+			}
+		}
 	}
 	if _, err := tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 		return err

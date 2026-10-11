@@ -159,6 +159,9 @@ type Edit struct {
 	DropFact    []int64
 	DropMarker  []int64
 	Usage       *UsageRec
+	// Model made the plan. Set it to record that the book was edited;
+	// leave it empty to only record Usage.
+	Model string
 }
 
 // Merge folds From into Into. Into keeps its own first appearance, and
@@ -234,7 +237,22 @@ func (s *Store) ApplyEdit(ctx context.Context, e Edit) (EditStats, error) {
 			return st, err
 		}
 	}
+	if e.Model != "" {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO edits (book_id, model) VALUES (?, ?)", e.BookID, e.Model); err != nil {
+			return st, err
+		}
+	}
 	return st, tx.Commit()
+}
+
+// LastEdit returns when a book was last edited, if ever.
+func (s *Store) LastEdit(ctx context.Context, bookID int64) (string, bool, error) {
+	var at string
+	err := s.db.QueryRowContext(ctx, "SELECT created_at FROM edits WHERE book_id = ? ORDER BY id DESC LIMIT 1", bookID).Scan(&at)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	return at, err == nil, err
 }
 
 func merge(ctx context.Context, tx *sql.Tx, seriesID, bookID, into, from int64) error {

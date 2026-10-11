@@ -146,6 +146,14 @@ CREATE TABLE key_grants (
   decided_by        INTEGER REFERENCES users(id)
 );
 
+-- Each applied gmesh edit. Another edit trims again, so it has to be asked for.
+CREATE TABLE edits (
+  id         INTEGER PRIMARY KEY,
+  book_id    INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+  model      TEXT    NOT NULL,
+  created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE usage (
   id            INTEGER PRIMARY KEY,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
