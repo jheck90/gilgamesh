@@ -17,6 +17,14 @@ type chunk struct {
 
 func (c chunk) firstOrd() int { return c.Sentences[0].Ord }
 
+func (c chunk) text() string {
+	parts := make([]string, len(c.Sentences))
+	for i, s := range c.Sentences {
+		parts[i] = s.Text
+	}
+	return strings.Join(parts, "\n")
+}
+
 func (c chunk) words() int {
 	n := 0
 	for _, s := range c.Sentences {
