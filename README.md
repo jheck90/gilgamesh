@@ -99,6 +99,11 @@ at the end of each chapter. Partway through one, snap the page you're on:
 - **Or type the last 4 or more words you read** and tap "Snap" to move to
   the sentence they end in.
 
+A snap ahead of where you are moves you straight there. One behind it,
+rereading an earlier page or by accident, asks first ("You're partway
+through Chapter 14. Move back to Chapter 12?"), and only "Move back"
+changes your position.
+
 Titles of chapters you haven't reached stay hidden, and anything you
 haven't met yet returns the same "Nothing here yet" as something that
 doesn't exist.

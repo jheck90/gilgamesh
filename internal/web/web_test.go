@@ -543,25 +543,6 @@ func buttons(t *testing.T, page string) []button {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attr := func(n *html.Node, key string) string {
-		for _, a := range n.Attr {
-			if a.Key == key {
-				return a.Val
-			}
-		}
-		return ""
-	}
-	var text func(n *html.Node) string
-	text = func(n *html.Node) string {
-		if n.Type == html.TextNode {
-			return n.Data
-		}
-		var b strings.Builder
-		for c := range n.ChildNodes() {
-			b.WriteString(text(c))
-		}
-		return b.String()
-	}
 	var out []button
 	var form *html.Node
 	for n := range doc.Descendants() {
@@ -572,22 +553,44 @@ func buttons(t *testing.T, page string) []button {
 		case "form":
 			form = n
 		case "button":
-			if form == nil || attr(n, "type") == "button" {
+			if form == nil || attrOf(n, "type") == "button" {
 				continue
 			}
-			b := button{label: strings.TrimSpace(text(n)), action: attr(form, "action"), form: url.Values{}}
+			b := button{label: strings.TrimSpace(textOf(n)), action: attrOf(form, "action"), form: url.Values{}}
 			for in := range form.Descendants() {
-				if in.Type == html.ElementNode && in.Data == "input" && attr(in, "type") != "file" && attr(in, "name") != "" {
-					b.form.Set(attr(in, "name"), attr(in, "value"))
+				if in.Type == html.ElementNode && in.Data == "input" && attrOf(in, "type") != "file" && attrOf(in, "name") != "" {
+					b.form.Set(attrOf(in, "name"), attrOf(in, "value"))
 				}
 			}
-			if name := attr(n, "name"); name != "" {
-				b.form.Set(name, attr(n, "value"))
+			if name := attrOf(n, "name"); name != "" {
+				b.form.Set(name, attrOf(n, "value"))
 			}
 			out = append(out, b)
 		}
 	}
 	return out
+}
+
+// attrOf is an element's attribute key, or "" without one.
+func attrOf(n *html.Node, key string) string {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return a.Val
+		}
+	}
+	return ""
+}
+
+// textOf is all the text inside n.
+func textOf(n *html.Node) string {
+	if n.Type == html.TextNode {
+		return n.Data
+	}
+	var b strings.Builder
+	for c := range n.ChildNodes() {
+		b.WriteString(textOf(c))
+	}
+	return b.String()
 }
 
 // labels is what each button says.
@@ -692,6 +695,161 @@ func TestEachKindOfRevealAsksForTheLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSnapBehindThePositionAsksFirst(t *testing.T) {
+	// Each snap lands behind where the reader has got to, so it asks before
+	// moving them back, naming both places by chapter.
+	cases := []struct {
+		name, saved string // typed words that set the position first
+		snap        snapping
+		question    string
+		where       string // once the reader taps "Move back"
+	}{
+		{"typed words in an earlier chapter", "he's mordecai someone whispered",
+			typing("carl woke to the sound"),
+			"You’re partway through II The Hooded Man Is Mordecai. Move back to I The Sea-dog?",
+			"Partway through I The Sea-dog"},
+		{"a sentence tapped on the line question", "he's mordecai someone whispered",
+			tapping("Carl woke to the sound of gulls. It was Day 1.", "Carl woke to the sound of gulls."),
+			"You’re partway through II The Hooded Man Is Mordecai. Move back to I The Sea-dog?",
+			"Partway through I The Sea-dog"},
+		{"a photo of a page that ends a chapter", "he's mordecai someone whispered",
+			photographing("“The tide always turns,” his mother used to say.\nA hooded man watched"),
+			"You’re partway through II The Hooded Man Is Mordecai. Move back to the end of I The Sea-dog?",
+			"Finished I The Sea-dog"},
+		{"typed words earlier in the same chapter", "someone whispered. The tide always turns",
+			typing("a hooded man watched"),
+			"You’ve finished II The Hooded Man Is Mordecai. Move back to earlier in II The Hooded Man Is Mordecai?",
+			"Partway through II The Hooded Man Is Mordecai"},
+		{"not started on the book's first page", "he's mordecai someone whispered",
+			tapping("Carl woke to the sound of gulls. It was Day 1.", notStarted),
+			"You’re partway through II The Hooded Man Is Mordecai. Move back to I The Sea-dog?",
+			"Partway through I The Sea-dog"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv, _ := setup(t, "")
+			_, body := send(t, srv, "", "/b/1/snap", url.Values{"words": {c.saved}})
+			was := regexp.MustCompile(`<p class="where">[^<]*</p>`).FindString(body)
+			question := c.snap(t, srv)
+			if !strings.Contains(question, c.question) {
+				t.Errorf("want the question %q:\n%s", c.question, question)
+			}
+			if strings.Contains(question, "/b/1/e/") || strings.Contains(question, "Chieftain") {
+				t.Errorf("the question showed a card or a later chapter title:\n%s", question)
+			}
+			if _, body := send(t, srv, "", "/b/1", nil); !strings.Contains(body, was) {
+				t.Errorf("asking moved the position from %s:\n%s", was, body)
+			}
+			if _, body := follow(t, srv, question, "Keep my place"); !strings.Contains(body, was) {
+				t.Errorf("keeping my place moved the position from %s:\n%s", was, body)
+			}
+			if _, body := tap(t, srv, question, "Move back"); !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("moving back: want %q\n%s", c.where, body)
+			}
+		})
+	}
+}
+
+func TestMoveBackOffTheBookIsRejected(t *testing.T) {
+	srv, _ := setup(t, "")
+	send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"4"}})
+	_, question := send(t, srv, "", "/b/1/snap", url.Values{"words": {"carl woke to the sound"}})
+	bs := buttons(t, question)
+	i := slices.IndexFunc(bs, func(b button) bool { return b.label == "Move back" })
+	if i < 0 {
+		t.Fatalf("no Move back button:\n%s", question)
+	}
+	// The book is sentences 0 to 6, and -1 is before it starts.
+	for _, ord := range []string{"", "one", "-2", "7"} {
+		t.Run(ord, func(t *testing.T) {
+			if code, body := send(t, srv, "", bs[i].action, url.Values{"ord": {ord}}); code != 400 {
+				t.Errorf("got %d, want 400\n%s", code, body)
+			}
+			if _, body := send(t, srv, "", "/b/1", nil); !strings.Contains(body, `<p class="where">Finished II The Hooded Man Is Mordecai</p>`) {
+				t.Errorf("the position moved:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestSnapAheadOrToTheSamePlaceDoesntAsk(t *testing.T) {
+	// Snaps with no position saved are in the tests above.
+	mordecai := "A hooded man watched from the dunes. “He’s Mordecai,” someone whispered."
+	cases := []struct {
+		name, saved string // typed words that set the position first
+		snap        snapping
+		where       string
+	}{
+		{"typed words ahead", "carl woke to the sound",
+			typing("a hooded man watched"), "Partway through II The Hooded Man Is Mordecai"},
+		{"a photo ahead", "carl woke to the sound",
+			photographing("“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes."),
+			"Partway through II The Hooded Man Is Mordecai"},
+		{"a sentence tapped ahead", "carl woke to the sound",
+			tapping(mordecai, "“He’s Mordecai,” someone whispered."), "Partway through II The Hooded Man Is Mordecai"},
+		{"typed words where the reader already is", "a hooded man watched",
+			typing("a hooded man watched"), "Partway through II The Hooded Man Is Mordecai"},
+		{"a sentence tapped where the reader already is", "a hooded man watched",
+			tapping(mordecai, "A hooded man watched from the dunes."), "Partway through II The Hooded Man Is Mordecai"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv, _ := setup(t, "")
+			send(t, srv, "", "/b/1/snap", url.Values{"words": {c.saved}})
+			body := c.snap(t, srv)
+			if strings.Contains(body, "Move back") || !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("want %q without asking:\n%s", c.where, body)
+			}
+		})
+	}
+}
+
+// snapping is one way of snapping a page of the first book, as the default
+// reader. It returns the page the snap lands on.
+type snapping func(t *testing.T, srv *httptest.Server) string
+
+// typing snaps by typing words.
+func typing(words string) snapping {
+	return func(t *testing.T, srv *httptest.Server) string {
+		_, body := send(t, srv, "", "/b/1/snap", url.Values{"words": {words}})
+		return body
+	}
+}
+
+// photographing snaps a photo of a page showing text.
+func photographing(text string) snapping {
+	return func(t *testing.T, srv *httptest.Server) string {
+		_, body := snapPhoto(t, srv, "/b/1/snap", photo(text))
+		return body
+	}
+}
+
+// tapping snaps a photo of a page showing text, then taps label on the
+// line question it asks.
+func tapping(text, label string) snapping {
+	return func(t *testing.T, srv *httptest.Server) string {
+		_, body := tap(t, srv, photographing(text)(t, srv), label)
+		return body
+	}
+}
+
+// follow follows the link labelled label on page, as the default reader,
+// and returns the page it lands on.
+func follow(t *testing.T, srv *httptest.Server, page, label string) (int, string) {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for n := range doc.Descendants() {
+		if n.Type == html.ElementNode && n.Data == "a" && strings.TrimSpace(textOf(n)) == label {
+			return send(t, srv, "", attrOf(n, "href"), nil)
+		}
+	}
+	t.Fatalf("no link %q on the page:\n%s", label, page)
+	return 0, ""
 }
 
 // slowPhotos takes longer to read a photo than the server waits.
