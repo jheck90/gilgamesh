@@ -113,8 +113,8 @@ Titles of chapters you haven't reached stay hidden, and anything you
 haven't met yet returns the same "Nothing here yet" as something that
 doesn't exist.
 
-Photos are read on the server by [Tesseract](https://github.com/tesseract-ocr/tesseract)
-(English), matched against the book's own text, and thrown away. They're
+Photos are turned the way the phone was held, read on the server by
+[Tesseract](https://github.com/tesseract-ocr/tesseract) (English), matched against the book's own text, and thrown away. They're
 never written to disk, the database or the log, and no model sees them. The
 Docker image includes Tesseract. Built from source, photo snaps need the
 `tesseract` program on the PATH (`apt install tesseract-ocr`, `brew install
