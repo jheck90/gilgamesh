@@ -105,3 +105,23 @@ button.primary {
 .timeline .name { font-weight: 600; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 code { font-size: 14px; }
+.files li { margin-bottom: 8px; }
+.files li > a, .files .unavailable {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text); text-decoration: none;
+}
+.files .unavailable { opacity: .6; }
+.files .title { font-weight: 600; }
+.files .meta { font-size: 13px; }
+.path { color: var(--muted); font: 12px ui-monospace, monospace; overflow-wrap: anywhere; }
+.fields label { display: flex; flex-direction: column; gap: 4px; flex: 1; font: 14px system-ui, sans-serif; color: var(--muted); }
+.fields label:last-child { flex: 0 0 6rem; }
+label.check { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; }
+label.check input { flex: none; min-height: 0; width: 18px; height: 18px; padding: 0; }
+.sections li { border-bottom: 1px solid var(--line); }
+.sections li > .meta { display: block; padding: 6px 0; }
+.problem { color: #a4282c; font-family: system-ui, sans-serif; font-size: 15px; }
+@media (prefers-color-scheme: dark) { .problem { color: #f08a8d; } }
+button:disabled { opacity: .5; cursor: not-allowed; }

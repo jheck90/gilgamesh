@@ -83,8 +83,37 @@ export ANTHROPIC_API_KEY=...        # or see "Keys" below
 Or with Docker:
 
 ```sh
-docker run -d -p 8080:8080 -v gilgamesh:/data -v /path/to/books:/books:ro ghcr.io/jheck90/gilgamesh
-docker exec -it -e ANTHROPIC_API_KEY=... <container> gmesh ingest /books/book.epub --dry-run
+docker run -d -p 8080:8080 -v gilgamesh:/data -v /path/to/books:/books:ro \
+  -e GMESH_LIBRARY=/books -e ANTHROPIC_API_KEY=... ghcr.io/jheck90/gilgamesh
+```
+
+Or as a Nomad job, with the books mounted read-only:
+
+```hcl
+task "gilgamesh" {
+  driver = "docker"
+  config {
+    image = "ghcr.io/jheck90/gilgamesh"
+    args  = ["serve", "--library", "/books"]
+    ports = ["http"]
+    mount {
+      type     = "bind"
+      source   = "/media/books"
+      target   = "/books"
+      readonly = true
+    }
+    mount {
+      type   = "bind"
+      source = "/srv/gilgamesh"
+      target = "/data"
+    }
+  }
+  template {
+    data        = "ANTHROPIC_API_KEY={{ with nomadVar \"nomad/jobs/gilgamesh\" }}{{ .anthropic_api_key }}{{ end }}"
+    destination = "secrets/env"
+    env         = true
+  }
+}
 ```
 
 Open it on your phone and use "Add to Home Screen". Tap "I finished ..."
@@ -208,8 +237,37 @@ which call it's on and its state. The reader who started it, or the admin,
 can pause, resume or cancel it there; cancelling removes the partly added
 book, as `gmesh rm` does. Killing the server loses nothing: it picks up at
 the next call when it starts again. Give `serve` the same `GMESH_SECRET`
-and instance key as the CLI. (Picking a book to add from the web app comes
-with the library page.)
+and instance key as the CLI.
+
+### Adding a book from the web app
+
+`serve --library DIR` (or `GMESH_LIBRARY`) names the **library**: a
+folder of EPUBs, best mounted read-only. "Add a book" on the home page lists
+every EPUB under it, grouped by series and number from the EPUB, with books
+in no series last. Search matches title, author, series and path. Files that
+can't be added stay listed, greyed out, with the reason: already added (by
+content, so a copy under another path counts, linking to the book), being
+added, a later book in the series is already added, can't be read (not a
+valid EPUB, or no readable text, e.g. DRM), or still arriving (changed in the
+last minute, so a downloader may still be writing it). Each file is read once
+and remembered by its path, size and modification time; only new or changed
+files are read again. Nothing outside the folder is listed or opened: paths
+with `..` and symlinks that lead out are refused.
+
+Picking a file shows its chapters with word counts and the price range, as
+`ingest --dry-run` does. Tick chapters to leave out and press "Update
+price"; change the series name or number if the EPUB has them wrong. A clash
+with the reading order shows before anything is spent. "Then tidy its
+notes" (on by default) runs `edit` afterwards, with its own estimate;
+leaving it ticked agrees to that too. The model and effort are the key's
+defaults (`--chunk-words` and `--model` stay CLI-only). "Add this book" is
+the only step that spends: it puts the book in the queue above.
+
+Any reader can browse the library and see prices. Without a working key
+(none yet, a request the admin hasn't approved, or this month's allowance
+used up), "Add this book" is disabled, with the reason and the command that
+fixes it (`gmesh key set` or `gmesh key request`). `--prices` (or
+`GMESH_PRICES`) works for `serve` as for `ingest`.
 
 ## Layout
 
@@ -225,6 +283,7 @@ with the library page.)
 | `internal/llm` | Anthropic (official Go SDK) and OpenAI-compatible clients |
 | `internal/keys`, `internal/secrets` | whose key pays, and keys at rest |
 | `internal/adding` | turning an EPUB into a stored book, and the background queue `serve` adds books with |
+| `internal/library` | the folder of EPUBs the library page lists, and the cache of what each holds |
 | `internal/estimate` | the price range before adding a book, and the built-in prices |
 | `internal/web` | the reading web app (server-rendered, installable) |
 

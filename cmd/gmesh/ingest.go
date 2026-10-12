@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/jheck90/gilgamesh/internal/adding"
@@ -216,11 +215,7 @@ func (a *app) showPrice(ctx context.Context, b estimate.Book, model, effort, pri
 	} else {
 		cfg = res.Config
 	}
-	modelOf := func(c llm.Config) estimate.Model {
-		return estimate.Model{Provider: c.Provider, Name: c.Model, Effort: c.Effort}
-	}
-	ingest, edit, err := estimate.ForBook(ctx, st, b,
-		modelOf(adding.RunConfig(cfg, model, llm.DefaultIngestModel, effort)), modelOf(adding.RunConfig(cfg, "", llm.DefaultAnthropicModel, "medium")), prices)
+	ingest, edit, err := adding.Estimate(ctx, st, cfg, model, effort, b, prices)
 	if err != nil {
 		return err
 	}
@@ -232,51 +227,21 @@ func (a *app) showPrice(ctx context.Context, b estimate.Book, model, effort, pri
 	if ingest.Runs > 0 {
 		basis = fmt.Sprintf("output ratio from %d %s added on this model", ingest.Runs, plural(ingest.Runs, "book", "books"))
 	}
-	fmt.Fprintf(a.out, "estimate on %s (%s):\n  %s\n", modelName(ingest.Model), basis, priceLine(ingest))
+	fmt.Fprintf(a.out, "estimate on %s (%s):\n  %s\n", ingest.Model, basis, priceLine(ingest))
 	basis = "notes guessed: no edits on this model yet"
 	if edit.Runs > 0 {
 		basis = fmt.Sprintf("notes scaled from %d past %s on this model", edit.Runs, plural(edit.Runs, "edit", "edits"))
 	}
-	fmt.Fprintf(a.out, "then `gmesh edit` on %s, a rough estimate (%s):\n  %s\n", modelName(edit.Model), basis, priceLine(edit))
+	fmt.Fprintf(a.out, "then `gmesh edit` on %s, a rough estimate (%s):\n  %s\n", edit.Model, basis, priceLine(edit))
 	return nil
 }
 
-func modelName(m estimate.Model) string {
-	s := m.Provider + " " + m.Name
-	if m.Effort != "" {
-		s += " at " + m.Effort + " effort"
+func priceLine(e estimate.Estimate) string {
+	s := e.TokensText() + ", " + e.PriceText()
+	if !e.Priced && !e.Plan {
+		s += " (add one with --prices)"
 	}
 	return s
-}
-
-func priceLine(e estimate.Estimate) string {
-	s := fmt.Sprintf("input %s tokens, output %s tokens, ", tokenRange(e.Input), tokenRange(e.Output))
-	switch {
-	case e.Plan:
-		return s + "counts against your Claude plan"
-	case !e.Priced:
-		return s + fmt.Sprintf("no known price for %s (add one with --prices)", e.Model.Name)
-	case e.Dollars.Hi < 0.01:
-		return s + "under $0.01"
-	}
-	return s + fmt.Sprintf("about $%.2f–$%.2f", e.Dollars.Lo, e.Dollars.Hi)
-}
-
-func tokenRange(r estimate.Range) string {
-	if lo, hi := tokenCount(r.Lo), tokenCount(r.Hi); lo != hi {
-		return lo + "–" + hi
-	}
-	return tokenCount(r.Lo)
-}
-
-func tokenCount(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1000:
-		return fmt.Sprintf("%dk", (n+500)/1000)
-	}
-	return strconv.FormatInt(n, 10)
 }
 
 func plural(n int, one, many string) string {

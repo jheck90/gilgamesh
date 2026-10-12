@@ -47,7 +47,8 @@ type Queue struct {
 // an entry, or the admin, tries to pause, resume or cancel it.
 var ErrNotYours = errors.New("only the reader who started it, or the admin, can do that")
 
-func (q *Queue) resolve(ctx context.Context, u store.User) (keys.Resolved, error) {
+// Resolve picks the key u's books would be added on, as keys.Resolve does.
+func (q *Queue) Resolve(ctx context.Context, u store.User) (keys.Resolved, error) {
 	return keys.Resolve(ctx, q.Store, q.Box, u, q.Env)
 }
 
@@ -70,7 +71,7 @@ func (q *Queue) poke() {
 // Start puts a book in the queue for user, who must have a key that works
 // now. a.UserID is set from user.
 func (q *Queue) Start(ctx context.Context, user store.User, a store.QueuedAdd) (int64, error) {
-	if _, err := q.resolve(ctx, user); err != nil {
+	if _, err := q.Resolve(ctx, user); err != nil {
 		return 0, err
 	}
 	if _, ok, err := q.Store.PendingAddBySHA(ctx, a.SHA256); err != nil {
@@ -261,7 +262,7 @@ func (q *Queue) add(ctx context.Context, a store.QueuedAdd) error {
 	if !ok {
 		return errors.New("the reader who started this is gone")
 	}
-	res, err := q.resolve(ctx, user)
+	res, err := q.Resolve(ctx, user)
 	if err != nil {
 		return err
 	}
@@ -278,7 +279,7 @@ func (q *Queue) add(ctx context.Context, a store.QueuedAdd) error {
 	// Recheck before every call: borrowing may be revoked, or its allowance
 	// run out, partway through a book.
 	x.Allow = func(ctx context.Context) error {
-		now, err := q.resolve(ctx, user)
+		now, err := q.Resolve(ctx, user)
 		if err == nil && now.OwnerID != res.OwnerID {
 			err = errors.New("the key changed; resume to carry on with the new one")
 		}
@@ -309,7 +310,7 @@ func (q *Queue) setState(ctx context.Context, id int64, state string) error {
 // edit tidies a finished book's notes, as `gmesh edit` does, on the same
 // key and with no second confirmation.
 func (q *Queue) edit(ctx context.Context, user store.User, book store.Book) error {
-	res, err := q.resolve(ctx, user)
+	res, err := q.Resolve(ctx, user)
 	if err != nil {
 		return err
 	}

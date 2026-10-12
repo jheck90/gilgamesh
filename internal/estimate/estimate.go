@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"strconv"
 
 	"github.com/jheck90/gilgamesh/internal/extract"
 	"github.com/jheck90/gilgamesh/internal/llm"
@@ -32,6 +33,14 @@ type Dollars struct{ Lo, Hi float64 }
 // Model is what a run would call, and at what effort ("" for none).
 type Model struct{ Provider, Name, Effort string }
 
+func (m Model) String() string {
+	s := m.Provider + " " + m.Name
+	if m.Effort != "" {
+		s += " at " + m.Effort + " effort"
+	}
+	return s
+}
+
 // Book is what a run would read: its words left after --skip, and the
 // calls they split into.
 type Book struct{ Words, Calls int }
@@ -47,6 +56,42 @@ type Estimate struct {
 	// Plan is set for a Claude Code key: the calls count against a Claude
 	// subscription, so there are no dollars to show.
 	Plan bool
+}
+
+// TokensText is the token ranges, like "input 120k–180k tokens, output
+// 20k–40k tokens".
+func (e Estimate) TokensText() string {
+	return fmt.Sprintf("input %s tokens, output %s tokens", tokenRange(e.Input), tokenRange(e.Output))
+}
+
+// PriceText is the dollar range, or why there isn't one.
+func (e Estimate) PriceText() string {
+	switch {
+	case e.Plan:
+		return "counts against your Claude plan"
+	case !e.Priced:
+		return "no known price for " + e.Model.Name
+	case e.Dollars.Hi < 0.01:
+		return "under $0.01"
+	}
+	return fmt.Sprintf("about $%.2f–$%.2f", e.Dollars.Lo, e.Dollars.Hi)
+}
+
+func tokenRange(r Range) string {
+	if lo, hi := tokenCount(r.Lo), tokenCount(r.Hi); lo != hi {
+		return lo + "–" + hi
+	}
+	return tokenCount(r.Lo)
+}
+
+func tokenCount(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1000:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	}
+	return strconv.FormatInt(n, 10)
 }
 
 // Each extraction call also lists the entities the reader already knows

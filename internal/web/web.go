@@ -1,7 +1,8 @@
 // Package web serves the reading side of Gilgamesh: set where you are,
 // browse who and what you've met, and open a card. Reading never calls a
 // model, and nothing past the reader's position is ever rendered. Books
-// being added in the background can be watched, paused and cancelled.
+// being added in the background can be watched, paused and cancelled, and
+// new ones picked from the library, priced, and queued.
 package web
 
 import (
@@ -22,6 +23,8 @@ import (
 	"time"
 
 	"github.com/jheck90/gilgamesh/internal/adding"
+	"github.com/jheck90/gilgamesh/internal/estimate"
+	"github.com/jheck90/gilgamesh/internal/library"
 	"github.com/jheck90/gilgamesh/internal/store"
 	"github.com/jheck90/gilgamesh/internal/text"
 )
@@ -44,6 +47,11 @@ type Server struct {
 	// Adding is the queue of books being added in the background; nil
 	// leaves out the queue page.
 	Adding *adding.Queue
+	// Library is the directory of EPUBs readers can pick a book to add
+	// from, priced with Prices; nil (or no queue) leaves out the library
+	// page.
+	Library *library.Library
+	Prices  estimate.Prices
 
 	// maxPhoto caps a photo's size in bytes, and photoTimeout how long
 	// reading one may take. Zero means 20 MB and 30 seconds.
@@ -90,6 +98,11 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /adding/{id}/pause", s.pauseAdding)
 		mux.HandleFunc("POST /adding/{id}/resume", s.resumeAdding)
 		mux.HandleFunc("POST /adding/{id}/cancel", s.cancelAdding)
+		if s.Library != nil {
+			mux.HandleFunc("GET /library", s.library)
+			mux.HandleFunc("GET /library/book", s.preview)
+			mux.HandleFunc("POST /library/add", s.add)
+		}
 	}
 	return headers(mux)
 }
@@ -173,7 +186,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row{Book: b, Where: rd.where(), Ready: p.Done()})
 	}
-	s.render(w, "home", map[string]any{"Title": "Gilgamesh", "Books": rows, "Queue": s.Adding != nil})
+	s.render(w, "home", map[string]any{"Title": "Gilgamesh", "Books": rows, "Queue": s.Adding != nil, "Library": s.Adding != nil && s.Library != nil})
 }
 
 // reading is a reader's view of one book.

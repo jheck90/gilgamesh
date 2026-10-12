@@ -82,6 +82,9 @@ func Resolve(ctx context.Context, st *store.Store, box *secrets.Box, user store.
 	if !ok {
 		return Resolved{}, ErrNoKey
 	}
+	if g.Status == store.GrantRequested {
+		return Resolved{}, errors.New("your request to use the admin's key is waiting for the admin to approve it")
+	}
 	if g.Status != store.GrantApproved {
 		return Resolved{}, fmt.Errorf("your request to use the admin's key is %s", g.Status)
 	}

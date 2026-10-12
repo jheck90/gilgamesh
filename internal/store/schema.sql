@@ -191,3 +191,17 @@ CREATE TABLE add_queue (
   book_id      INTEGER REFERENCES books(id) ON DELETE SET NULL,
   created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- What each EPUB in the library held when it last had this size and
+-- modification time, so only new or changed files are read again.
+CREATE TABLE library_files (
+  path         TEXT    PRIMARY KEY, -- relative to the library root
+  size         INTEGER NOT NULL,
+  mod_time     INTEGER NOT NULL,    -- Unix nanoseconds
+  sha256       TEXT    NOT NULL,
+  title        TEXT    NOT NULL DEFAULT '',
+  author       TEXT    NOT NULL DEFAULT '',
+  series       TEXT    NOT NULL DEFAULT '',
+  series_index REAL    NOT NULL DEFAULT 0,
+  unreadable   TEXT    NOT NULL DEFAULT '' -- why it can't be added
+);

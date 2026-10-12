@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jheck90/gilgamesh/internal/epub"
+	"github.com/jheck90/gilgamesh/internal/estimate"
 	"github.com/jheck90/gilgamesh/internal/llm"
 	"github.com/jheck90/gilgamesh/internal/store"
 	"github.com/jheck90/gilgamesh/internal/text"
@@ -139,6 +140,16 @@ func RunConfig(c llm.Config, model, anthropicDefault, effort string) llm.Config 
 		c.Effort = effort
 	}
 	return c
+}
+
+// Estimate prices adding b on cfg's key, and editing it afterwards, on the
+// models those runs would use: model and effort as for RunConfig.
+func Estimate(ctx context.Context, st *store.Store, cfg llm.Config, model, effort string, b estimate.Book, p estimate.Prices) (estimate.Estimate, estimate.Estimate, error) {
+	modelOf := func(c llm.Config) estimate.Model {
+		return estimate.Model{Provider: c.Provider, Name: c.Model, Effort: c.Effort}
+	}
+	return estimate.ForBook(ctx, st, b,
+		modelOf(RunConfig(cfg, model, llm.DefaultIngestModel, effort)), modelOf(RunConfig(cfg, "", llm.DefaultAnthropicModel, "medium")), p)
 }
 
 // Backup copies the database at dbPath to a new file beside it before

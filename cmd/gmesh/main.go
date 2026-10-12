@@ -34,7 +34,8 @@ Books
 
 Reading (only adding books ever calls a model)
   serve [--addr :8080]     the reading web app (installable on a phone); also adds
-                           books queued from it in the background, one at a time
+                           books queued from it in the background, one at a time;
+                           --library DIR lets readers pick them from a folder of EPUBs
   pos BOOK [--chapter N]   show or set where you are
   entities BOOK            everyone and everything you've met so far
   card BOOK NAME           what you know about NAME so far
@@ -51,7 +52,7 @@ look as of the end of chapter N instead of your saved position.
 
 Environment: GMESH_DB, GMESH_USER, GMESH_SECRET, ANTHROPIC_API_KEY,
 GMESH_PROVIDER, GMESH_API_KEY, GMESH_BASE_URL, GMESH_MODEL, GMESH_ADDR,
-GMESH_TRUST_HEADER, GMESH_PRICES.
+GMESH_TRUST_HEADER, GMESH_PRICES, GMESH_LIBRARY.
 `
 
 type app struct {
