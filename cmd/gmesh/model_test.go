@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jheck90/gilgamesh/internal/llm"
@@ -46,5 +47,38 @@ func TestModelClientDefault(t *testing.T) {
 				t.Errorf("model = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Readers can't store a Claude Code key yet: only the admin's environment
+// holds one (#24).
+func TestKeySetRefusesClaudeCode(t *testing.T) {
+	t.Setenv("GMESH_SECRET", "")
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-db", filepath.Join(t.TempDir(), "g.db"), "key", "set", "--provider", "claude-code"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Errorf("err = %v, want it to point at the admin's environment", err)
+	}
+}
+
+// A Claude Code key reads on Haiku and tidies on Opus too, at the effort
+// asked for.
+func TestModelClientClaudeCodeDefault(t *testing.T) {
+	t.Setenv("GMESH_SECRET", "")
+	t.Setenv("GMESH_PROVIDER", "claude-code")
+	t.Setenv("GMESH_MODEL", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-tok")
+	ctx := context.Background()
+	a := &app{dbPath: filepath.Join(t.TempDir(), "g.db"), userName: "me", out: &bytes.Buffer{}}
+	defer a.close()
+	st, _ := a.store()
+	user, _ := a.user(ctx)
+
+	client, res, err := a.modelClient(ctx, st, user, "", llm.DefaultIngestModel, "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Model() != "claude-haiku-5-5" || res.Config.Effort != "high" {
+		t.Errorf("model = %q, effort = %q; want claude-haiku-5-5 at high", client.Model(), res.Config.Effort)
 	}
 }

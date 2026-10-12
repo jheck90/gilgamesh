@@ -71,6 +71,9 @@ func (a *app) keySet(ctx context.Context, user store.User, args []string) error 
 	if _, err := llm.New(llm.Config{Provider: *provider, Model: *model}); err != nil {
 		return err
 	}
+	if *provider == llm.ProviderClaudeCode {
+		return errors.New("a Claude Code key can't be stored per reader yet: the admin sets GMESH_PROVIDER=claude-code and CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) in the server's environment")
+	}
 	bx, err := box()
 	if err != nil {
 		return err

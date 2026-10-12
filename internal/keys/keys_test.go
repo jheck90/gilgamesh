@@ -68,3 +68,37 @@ func must[T any](v T, err error) T {
 	}
 	return v
 }
+
+// A Claude Code key is the admin's subscription: theirs to use, never lent.
+func TestClaudeCodeKeyIsNotBorrowed(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "k.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	admin, _ := st.EnsureUser(ctx, "default")
+	alice, _ := st.EnsureUser(ctx, "alice")
+	env := Env(func(k string) string {
+		switch k {
+		case "GMESH_PROVIDER":
+			return "claude-code"
+		case "CLAUDE_CODE_OAUTH_TOKEN":
+			return "oauth-tok"
+		case "ANTHROPIC_API_KEY":
+			return "sk-env"
+		}
+		return ""
+	})
+
+	r, err := Resolve(ctx, st, nil, admin, env)
+	if err != nil || r.Config.Provider != "claude-code" || r.Config.APIKey != "oauth-tok" {
+		t.Fatalf("admin with a Claude Code key: %+v, %v", r, err)
+	}
+
+	st.RequestGrant(ctx, alice.ID, "")
+	st.DecideGrant(ctx, alice.ID, store.GrantApproved, 0, admin.ID)
+	if r, err := Resolve(ctx, st, nil, alice, env); err == nil {
+		t.Fatalf("alice borrowed the admin's Claude Code key: %+v", r)
+	}
+}

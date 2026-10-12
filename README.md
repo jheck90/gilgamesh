@@ -154,6 +154,17 @@ add books.
   Requests opt into server-side fallback (except on Haiku, which has none),
   so a passage a safety classifier declines is retried on a fallback model
   instead of failing.
+- **A Claude subscription** (a Claude Code key): `GMESH_PROVIDER=claude-code`
+  runs each call through the `claude` CLI, so adding a book counts against
+  your Claude plan's usage instead of API billing. Make a token with `claude
+  setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` (without one, the CLI's own
+  login is used). Use the `ghcr.io/jheck90/gilgamesh:claude-code` image,
+  which includes the CLI; built from source, `claude` must be on the PATH.
+  The CLI gets no tools, settings or MCP servers, and any
+  `ANTHROPIC_API_KEY` is hidden from it so it can't bill the API. If you hit
+  your plan's usage limit partway through a book, `ingest` stops with the
+  CLI's message; run it again after the reset to carry on. Only the admin
+  can use a Claude Code key: it can't be stored per reader or borrowed.
 - **Anything OpenAI-compatible** (OpenAI, OpenRouter, Ollama, llama.cpp,
   vLLM): `GMESH_PROVIDER=openai`, `GMESH_BASE_URL`, `GMESH_MODEL`, and
   `GMESH_API_KEY` if the server needs one. The model must support JSON-schema
