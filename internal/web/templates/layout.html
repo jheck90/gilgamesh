@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/register.js" defer></script>
 <script src="/static/snap.js" defer></script>
+<script src="/static/library.js" defer></script>
 </head>
 <body>
 <header class="top">
@@ -48,6 +49,7 @@
   </li>
 {{end}}
 </ul>
+{{if .Library}}<p class="meta"><a href="/library">Add a book</a> · <a href="/adding">Books being added</a></p>{{else if .Queue}}<p class="meta"><a href="/adding">Books being added</a></p>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "book"}}{{template "head" .}}
@@ -189,4 +191,111 @@
 <ol class="timeline">
 {{range .Marks}}<li><span class="name">{{.Label}}</span> <span class="meta">{{.Where}}</span></li>{{else}}<p class="empty">No in-world days or dates yet.</p>{{end}}
 </ol>
+{{template "foot" .}}{{end}}
+
+{{define "adding"}}{{template "head" .}}
+<h1>Books being added</h1>
+{{with .Adds}}
+<ul class="adds">
+{{range .}}
+  <li>
+    <span class="title">{{.Name}}</span>
+    <span class="meta">{{.State}}{{with .Call}} · {{.}}{{end}} · started by {{.Started}}</span>
+    {{with .Reason}}<span class="meta">{{.}}</span>{{end}}
+    {{if .Yours}}
+    <div class="row">
+      {{if .CanPause}}<form method="post" action="/adding/{{.ID}}/pause"><button type="submit">Pause</button></form>{{end}}
+      {{if .CanResume}}<form method="post" action="/adding/{{.ID}}/resume"><button type="submit">Resume</button></form>{{end}}
+      {{if .CanCancel}}<form method="post" action="/adding/{{.ID}}/cancel"><button type="submit">Cancel</button></form>{{end}}
+    </div>
+    {{end}}
+  </li>
+{{end}}
+</ul>
+{{else}}
+<p class="empty">No books are being added.</p>
+{{end}}
+<p><a href="/">Back to your books</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "library"}}{{template "head" .}}
+<h1>Add a book</h1>
+<form method="get" action="/library" class="search">
+  <input type="search" name="q" value="{{.Query}}" placeholder="Title, author, series or file" aria-label="Search the library">
+</form>
+<p class="meta">{{.Total}} {{plural .Total "file" "files"}}{{if .Query}} matching “{{.Query}}” · <a href="/library">clear</a>{{end}}</p>
+{{range .Groups}}
+<section class="series">
+  {{with .Series}}<h2>{{.}}</h2>{{else}}<h2>Not in a series</h2>{{end}}
+  <ul class="files">
+  {{range .Files}}
+    <li{{if .Reason}} class="unavailable"{{end}}>
+      {{if .Pick}}<a href="{{.Pick}}">{{end}}
+      <span class="title">{{.Title}}</span>
+      <span class="meta">{{with .Series}}{{.}} · {{end}}{{.Author}}</span>
+      <span class="path">{{.Path}}</span>
+      {{if .Pick}}</a>{{end}}
+      {{with .Reason}}<span class="meta">{{.}}</span>{{end}}
+      {{if .BookID}}<a class="meta" href="/b/{{.BookID}}">Open it</a>{{else if .Queued}}<a class="meta" href="/adding">See the queue</a>{{end}}
+    </li>
+  {{end}}
+  </ul>
+</section>
+{{else}}
+<p class="empty">{{if .Query}}Nothing in the library matches.{{else}}No EPUB files in the library.{{end}}</p>
+{{end}}
+<p><a href="/">Back to your books</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "preview"}}{{template "head" .}}
+{{with .Plan}}
+<h1>{{.Title}}</h1>
+<p class="meta">{{with .Author}}{{.}} · {{end}}<span class="path">{{.File.Path}}</span></p>
+{{if not .Sections}}
+<p class="problem">{{.Problem}}</p>
+{{else}}
+<form method="get" action="/library/book" class="preview">
+  <input type="hidden" name="path" value="{{.File.Path}}">
+  <input type="hidden" name="sha" value="{{.File.SHA256}}">
+  <input type="hidden" name="set" value="1">
+  <div class="row fields">
+    <label>Series <input type="text" name="series" value="{{.Series}}"></label>
+    <label>Number <input type="text" name="index" value="{{.Index}}" inputmode="decimal" size="4"></label>
+  </div>
+  <h2>Chapters</h2>
+  <p class="meta">Tick what to leave out: front matter, or a preview of the next book at the end.</p>
+  <ol class="sections">
+  {{range .Sections}}
+    <li>{{if .Short}}<span class="meta">{{.N}}. {{.Title}} ({{.Words}} words, left out: {{.Short}})</span>{{else}}<label class="check"><input type="checkbox" name="skip" value="{{.N}}"{{if .Skipped}} checked{{end}}> {{.N}}. {{.Title}} <span class="meta">{{.Words}} words</span></label>{{end}}</li>
+  {{end}}
+  </ol>
+  <p class="meta">{{.Book.Words}} words, {{.Book.Calls}} model {{plural .Book.Calls "call" "calls"}}</p>
+  {{if $.HasModel}}
+  <h2>Price</h2>
+  {{if $.Assumed}}<p class="meta">No key to price with, so this assumes an Anthropic key.</p>{{end}}
+  <p>Adding it on {{$.Ingest.Model}}: {{$.Ingest.TokensText}}, <strong>{{$.Ingest.PriceText}}</strong>.{{if not $.Ingest.Runs}} <span class="meta">The output is a guess until a book has been added on this model.</span>{{end}}</p>
+  <label class="check"><input type="checkbox" name="edit" value="1"{{if .Edit}} checked{{end}}> Then tidy its notes on {{$.EditPrice.Model}}, a rough estimate: {{$.EditPrice.TokensText}}, <strong>{{$.EditPrice.PriceText}}</strong></label>
+  {{else}}
+  <p class="meta">No model set on this key, so no price.</p>
+  <label class="check"><input type="checkbox" name="edit" value="1"{{if .Edit}} checked{{end}}> Then tidy its notes</label>
+  {{end}}
+  {{with .Problem}}<p class="problem">{{.}}</p>{{end}}
+  {{with $.KeyProblem}}<p class="problem">{{.}}</p>{{end}}
+  <div class="row"><button type="submit" data-update>Update price</button></div>
+  <button class="primary" type="submit" formmethod="post" formaction="/library/add"{{if $.Blocked}} disabled{{end}}>Add this book</button>
+  <p class="meta">Adding it is the only step that spends anything.</p>
+</form>
+{{end}}
+{{end}}
+<p><a href="/library">Back to the library</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "cancel"}}{{template "head" .}}
+<h1>Cancel adding {{.Add.Name}}?</h1>
+<p>{{if .Started}}This removes the partly added book, its notes, and everything first met in it, as <code>gmesh rm</code> does.{{else}}This takes it out of the queue.{{end}}</p>
+<form method="post" action="/adding/{{.Add.ID}}/cancel" class="row">
+  <input type="hidden" name="confirm" value="yes">
+  <button class="primary" type="submit">Cancel adding</button>
+</form>
+<p><a href="/adding">Keep it</a></p>
 {{template "foot" .}}{{end}}

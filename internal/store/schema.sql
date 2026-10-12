@@ -166,6 +166,42 @@ CREATE TABLE usage (
   model         TEXT    NOT NULL,
   input_tokens  INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,
+  kind          TEXT    NOT NULL DEFAULT 'ingest', -- 'ingest' reads the book, 'edit' tidies its notes
+  effort        TEXT    NOT NULL DEFAULT '',       -- Anthropic effort; '' for none or not recorded
   created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX usage_user ON usage(user_id, created_at);
+
+-- Books waiting to be added in the background by `gmesh serve`, one at a
+-- time in id order. Each runs on the key of the reader who started it.
+CREATE TABLE add_queue (
+  id           INTEGER PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  path         TEXT    NOT NULL,
+  sha256       TEXT    NOT NULL, -- of the file when confirmed; a changed file isn't read
+  series       TEXT    NOT NULL,
+  series_index REAL    NOT NULL,
+  skip         TEXT    NOT NULL DEFAULT '', -- sections left out, like "1-3,40"
+  chunk_words  INTEGER NOT NULL,
+  model        TEXT    NOT NULL DEFAULT '',
+  effort       TEXT    NOT NULL DEFAULT '',
+  then_edit    INTEGER NOT NULL DEFAULT 0,
+  state        TEXT    NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'adding', 'editing', 'paused', 'done')),
+  reason       TEXT    NOT NULL DEFAULT '', -- why it's paused
+  book_id      INTEGER REFERENCES books(id) ON DELETE SET NULL,
+  created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- What each EPUB in the library held when it last had this size and
+-- modification time, so only new or changed files are read again.
+CREATE TABLE library_files (
+  path         TEXT    PRIMARY KEY, -- relative to the library root
+  size         INTEGER NOT NULL,
+  mod_time     INTEGER NOT NULL,    -- Unix nanoseconds
+  sha256       TEXT    NOT NULL,
+  title        TEXT    NOT NULL DEFAULT '',
+  author       TEXT    NOT NULL DEFAULT '',
+  series       TEXT    NOT NULL DEFAULT '',
+  series_index REAL    NOT NULL DEFAULT 0,
+  unreadable   TEXT    NOT NULL DEFAULT '' -- why it can't be added
+);

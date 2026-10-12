@@ -31,8 +31,9 @@ const (
 type Extractor struct {
 	Store      *store.Store
 	LLM        llm.Client
-	UserID     int64 // who is adding the book
-	KeyOwnerID int64 // whose key pays
+	UserID     int64  // who is adding the book
+	KeyOwnerID int64  // whose key pays
+	Effort     string // recorded with the usage, so estimates can tell efforts apart
 	// Allow is called before each chunk; returning an error stops the run
 	// (for example when a borrowed key's monthly allowance runs out).
 	Allow   func(ctx context.Context) error
@@ -119,7 +120,9 @@ func (x *Extractor) Run(ctx context.Context, b store.Book) error {
 		w, warnings := validate(out, c, k)
 		w.BookID, w.SeriesID, w.NextChunk = b.ID, b.SeriesID, i+1
 		w.Usage = x.usageRec(usage)
-		st, err := x.Store.ApplyChunk(ctx, w)
+		// The call is paid for: keep its notes and usage even if the run is
+		// being stopped.
+		st, err := x.Store.ApplyChunk(context.WithoutCancel(ctx), w)
 		if err != nil {
 			return err
 		}
@@ -212,7 +215,7 @@ func (x *Extractor) knownAt(ctx context.Context, b store.Book, c chunk) (known, 
 
 func (x *Extractor) usageRec(u llm.Usage) *store.UsageRec {
 	return &store.UsageRec{UserID: x.UserID, KeyOwnerID: x.KeyOwnerID, Provider: x.LLM.Provider(), Model: x.LLM.Model(),
-		InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
+		Effort: x.Effort, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens}
 }
 
 // saveUsage records tokens spent on a chunk that failed, so caps stay

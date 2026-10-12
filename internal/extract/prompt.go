@@ -1,6 +1,7 @@
 package extract
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -165,4 +166,11 @@ func renderUser(b store.Book, c chunk, cands []candidate, types []string) string
 	}
 	sb.WriteByte('\n')
 	return sb.String()
+}
+
+// PromptTokens is roughly what each call sends besides the passage and the
+// known entities: the instructions and the reply's schema.
+func PromptTokens() int {
+	schema, _ := json.Marshal(outputSchema)
+	return (len(systemPrompt) + len(schema)) / 4
 }

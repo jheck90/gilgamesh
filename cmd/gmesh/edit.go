@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/jheck90/gilgamesh/internal/adding"
 	"github.com/jheck90/gilgamesh/internal/edit"
 	"github.com/jheck90/gilgamesh/internal/llm"
 	"github.com/jheck90/gilgamesh/internal/store"
@@ -77,7 +78,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		var used llm.Usage
 		raw, used, err = (&edit.Editor{LLM: client}).Ask(ctx, notes)
 		usage = &store.UsageRec{UserID: user.ID, KeyOwnerID: res.OwnerID, Provider: client.Provider(), Model: client.Model(),
-			InputTokens: used.InputTokens, OutputTokens: used.OutputTokens}
+			Effort: res.Config.Effort, InputTokens: used.InputTokens, OutputTokens: used.OutputTokens}
 		planner = client.Model()
 		if err != nil {
 			a.recordUsage(ctx, st, book, usage)
@@ -105,16 +106,9 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.out, "dry run: nothing changed")
 		return nil
 	}
-	base := fmt.Sprintf("%s.before-edit-%d-%s", a.dbPath, book.ID, time.Now().Format("20060102-150405"))
-	backup := base
-	for i := 2; ; i++ {
-		if _, err := os.Stat(backup); errors.Is(err, os.ErrNotExist) {
-			break
-		}
-		backup = fmt.Sprintf("%s-%d", base, i)
-	}
-	if err := st.Backup(ctx, backup); err != nil {
-		return fmt.Errorf("backing up before the edit: %w", err)
+	backup, err := adding.Backup(ctx, st, a.dbPath, book.ID)
+	if err != nil {
+		return err
 	}
 	s, err := st.ApplyEdit(ctx, plan.Edit)
 	if err != nil {

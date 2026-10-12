@@ -2,27 +2,21 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
+	"github.com/jheck90/gilgamesh/internal/adding"
 	"github.com/jheck90/gilgamesh/internal/epub"
+	"github.com/jheck90/gilgamesh/internal/estimate"
 	"github.com/jheck90/gilgamesh/internal/extract"
 	"github.com/jheck90/gilgamesh/internal/keys"
 	"github.com/jheck90/gilgamesh/internal/llm"
 	"github.com/jheck90/gilgamesh/internal/store"
-	"github.com/jheck90/gilgamesh/internal/text"
 )
-
-// Sections shorter than this are title pages and separators, not chapters.
-const minSectionWords = 20
 
 func (a *app) ingest(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
@@ -35,6 +29,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	verbose := fs.Bool("v", false, "list every note the spoiler checks dropped")
 	maxCalls := fs.Int("max-calls", 0, "stop after this many model calls; run again to continue")
 	skipList := fs.String("skip", "", "sections to leave out, as numbered by --dry-run, like 1-3,40 (front matter, a preview of the next book)")
+	prices := fs.String("prices", envOr("GMESH_PRICES", ""), "JSON file of model prices that --dry-run uses instead of the built-in ones")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -48,15 +43,15 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	skip, err := parseSkip(*skipList)
+	skip, err := adding.ParseSkip(*skipList)
 	if err != nil {
 		return err
 	}
-	chapters, sentences, plan := prepare(eb, skip)
+	chapters, sentences, plan := adding.Prepare(eb, skip)
 	if len(sentences) == 0 {
 		return errors.New("no readable text found; DRM-protected books aren't supported")
 	}
-	seriesName, seriesIndex := seriesOf(eb, *series, *index)
+	seriesName, seriesIndex := adding.SeriesOf(eb, *series, *index)
 	nChunks := extract.CountChunks(chapters, sentences, *chunkWords)
 	words := 0
 	for _, s := range sentences {
@@ -66,20 +61,20 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	summary := func() {
 		fmt.Fprintf(a.out, "series: %s #%g\n", seriesName, seriesIndex)
 		fmt.Fprintf(a.out, "%d chapters, %d sentences, %d words (about %dk tokens of text)\n",
-			len(chapters), len(sentences), words, words*4/3/1000)
+			len(chapters), len(sentences), words, estimate.Tokens(words)/1000)
 		fmt.Fprintf(a.out, "extraction: %d model calls of up to %d words each\n", nChunks, *chunkWords)
 	}
 	if *dry {
 		summary()
 		for _, sec := range plan {
-			note := fmt.Sprintf("%d words", sec.words)
-			if sec.skipped != "" {
-				note += ", skipped: " + sec.skipped
+			note := fmt.Sprintf("%d words", sec.Words)
+			if sec.Skipped != "" {
+				note += ", skipped: " + sec.Skipped
 			}
-			fmt.Fprintf(a.out, "  %3d  %s (%s)\n", sec.n, sec.title, note)
+			fmt.Fprintf(a.out, "  %3d  %s (%s)\n", sec.N, sec.Title, note)
 		}
 		fmt.Fprintln(a.out, "check the start and end for front matter or a preview of the next book, and leave them out with --skip")
-		return nil
+		return a.showPrice(ctx, estimate.Book{Words: words, Calls: nChunks}, *model, *effort, *prices)
 	}
 
 	st, err := a.store()
@@ -90,7 +85,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	sha, err := fileSHA(path)
+	sha, err := adding.FileSHA(path)
 	if err != nil {
 		return err
 	}
@@ -139,7 +134,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		return err
 	}
 
-	x := &extract.Extractor{Store: st, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Log: a.out, Verbose: *verbose, MaxCalls: *maxCalls}
+	x := &extract.Extractor{Store: st, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Effort: res.Config.Effort, Log: a.out, Verbose: *verbose, MaxCalls: *maxCalls}
 	if res.Borrowed(user.ID) {
 		// Recheck before every call: the admin may revoke, and the cap
 		// may run out partway through a book.
@@ -168,26 +163,13 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 }
 
 // modelClient resolves which key user's model calls run on and opens a
-// client for it. The model is the one asked for, else the key's own, else
-// (on Anthropic or Claude Code) the command's default.
+// client for it.
 func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, anthropicDefault, effort string) (llm.Client, keys.Resolved, error) {
-	bx, err := box()
-	if err != nil {
-		return nil, keys.Resolved{}, err
-	}
-	res, err := keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
+	res, err := resolveKey(ctx, st, user)
 	if err != nil {
 		return nil, res, err
 	}
-	if model != "" {
-		res.Config.Model = model
-	}
-	if p := res.Config.Provider; p == llm.ProviderAnthropic || p == llm.ProviderClaudeCode {
-		if res.Config.Model == "" {
-			res.Config.Model = anthropicDefault
-		}
-		res.Config.Effort = effort
-	}
+	res.Config = adding.RunConfig(res.Config, model, anthropicDefault, effort)
 	client, err := llm.New(res.Config)
 	if err != nil {
 		return nil, res, err
@@ -196,104 +178,77 @@ func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User,
 	return client, res, nil
 }
 
-type planned struct {
-	n       int
-	title   string
-	words   int
-	skipped string
-}
-
-// prepare numbers every sentence in reading order and turns sections into
-// chapters. A chapter keeps its section number, so the numbers --dry-run
-// shows stay the chapter numbers even when some sections are skipped.
-func prepare(b *epub.Book, skip map[int]bool) ([]store.Chapter, []store.Sentence, []planned) {
-	var chapters []store.Chapter
-	var sentences []store.Sentence
-	var plan []planned
-	para := 0
-	for i, sec := range b.Sections {
-		n := i + 1
-		var sents []store.Sentence
-		words := 0
-		for _, p := range sec.Paragraphs {
-			for _, s := range text.Split(p) {
-				sents = append(sents, store.Sentence{Ord: len(sentences) + len(sents), ChapterIdx: n, Para: para, Text: s})
-				words += len(strings.Fields(s))
-			}
-			para++
-		}
-		title := sec.Title
-		if title == "" {
-			title = fmt.Sprintf("Section %d", n)
-		}
-		p := planned{n: n, title: title, words: words}
-		switch {
-		case skip[n]:
-			p.skipped = "--skip"
-		case words < minSectionWords:
-			p.skipped = "too short"
-		}
-		plan = append(plan, p)
-		if p.skipped != "" {
-			continue
-		}
-		chapters = append(chapters, store.Chapter{Idx: n, Title: title, FirstOrd: sents[0].Ord, LastOrd: sents[len(sents)-1].Ord})
-		sentences = append(sentences, sents...)
-	}
-	return chapters, sentences, plan
-}
-
-// parseSkip reads a list like "1-3,40".
-func parseSkip(s string) (map[int]bool, error) {
-	out := map[int]bool{}
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		lo, hi, isRange := strings.Cut(part, "-")
-		a, err1 := strconv.Atoi(strings.TrimSpace(lo))
-		b, err2 := a, error(nil)
-		if isRange {
-			b, err2 = strconv.Atoi(strings.TrimSpace(hi))
-		}
-		if err1 != nil || err2 != nil || a < 1 || b < a {
-			return nil, fmt.Errorf("can't read --skip %q", part)
-		}
-		for i := a; i <= b; i++ {
-			out[i] = true
-		}
-	}
-	return out, nil
-}
-
-func seriesOf(b *epub.Book, name string, index float64) (string, float64) {
-	if name == "" {
-		name = b.Series
-	}
-	if name == "" {
-		name = b.Title
-	}
-	if index == 0 {
-		index = b.SeriesIndex
-	}
-	if index == 0 {
-		index = 1
-	}
-	return name, index
-}
-
-func fileSHA(path string) (string, error) {
-	f, err := os.Open(path)
+func resolveKey(ctx context.Context, st *store.Store, user store.User) (keys.Resolved, error) {
+	bx, err := box()
 	if err != nil {
-		return "", err
+		return keys.Resolved{}, err
 	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	return keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
+}
+
+// showPrice estimates adding b, and editing it afterwards, on the models
+// those runs would use. Nothing here adds a reader or calls a model.
+func (a *app) showPrice(ctx context.Context, b estimate.Book, model, effort, pricesFile string) error {
+	prices, err := estimate.LoadPrices(pricesFile)
+	if err != nil {
+		return err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	st, err := a.store()
+	if err != nil {
+		return err
+	}
+	user, ok, err := st.UserByName(ctx, a.userName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Adding the book would add this reader, as admin if they're first.
+		_, hasAdmin, err := st.Admin(ctx)
+		if err != nil {
+			return err
+		}
+		user = store.User{Name: a.userName, IsAdmin: !hasAdmin}
+	}
+	cfg := llm.Config{Provider: llm.ProviderAnthropic}
+	if res, err := resolveKey(ctx, st, user); err != nil {
+		fmt.Fprintf(a.out, "no key to price with (%v); assuming an Anthropic key\n", err)
+	} else {
+		cfg = res.Config
+	}
+	ingest, edit, err := adding.Estimate(ctx, st, cfg, model, effort, b, prices)
+	if err != nil {
+		return err
+	}
+	if ingest.Model.Name == "" {
+		fmt.Fprintln(a.out, "no model set on this key, so no estimate (add --model)")
+		return nil
+	}
+	basis := "output guessed: no books added on this model yet"
+	if ingest.Runs > 0 {
+		basis = fmt.Sprintf("output ratio from %d %s added on this model", ingest.Runs, plural(ingest.Runs, "book", "books"))
+	}
+	fmt.Fprintf(a.out, "estimate on %s (%s):\n  %s\n", ingest.Model, basis, priceLine(ingest))
+	basis = "notes guessed: no edits on this model yet"
+	if edit.Runs > 0 {
+		basis = fmt.Sprintf("notes scaled from %d past %s on this model", edit.Runs, plural(edit.Runs, "edit", "edits"))
+	}
+	fmt.Fprintf(a.out, "then `gmesh edit` on %s, a rough estimate (%s):\n  %s\n", edit.Model, basis, priceLine(edit))
+	return nil
+}
+
+func priceLine(e estimate.Estimate) string {
+	s := e.TokensText() + ", " + e.PriceText()
+	if !e.Priced && !e.Plan {
+		s += " (add one with --prices)"
+	}
+	return s
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func (a *app) rm(ctx context.Context, args []string) error {

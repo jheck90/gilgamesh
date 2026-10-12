@@ -18,12 +18,28 @@ var schema string
 // schemaVersion is the version schema.sql creates. Each entry in
 // migrations takes an existing database up one version, so migrations[0]
 // goes from 1 to 2.
-const schemaVersion = 3
+const schemaVersion = 6
 
 var migrations = []string{
 	editsTable,
 	"ALTER TABLE entities ADD COLUMN title_alias_id INTEGER REFERENCES aliases(id) ON DELETE SET NULL",
+	usageKinds,
+	addQueueTable,
+	libraryTable,
 }
+
+// usageKinds tells an edit's tokens from reading the book, and records
+// effort from now on. In earlier usage, a finished book's first
+// total_chunks rows read it and any later ones are edits or their dry runs,
+// since only a finished book can be edited. A chunk that failed and was
+// retried also left a row, which shifts the line by one; that's rare
+// enough to live with.
+const usageKinds = `ALTER TABLE usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'ingest';
+ALTER TABLE usage ADD COLUMN effort TEXT NOT NULL DEFAULT '';
+UPDATE usage SET kind = 'edit' WHERE id IN (
+  SELECT u.id FROM usage u JOIN ingest_progress p ON p.book_id = u.book_id
+  WHERE p.next_chunk >= p.total_chunks
+    AND (SELECT COUNT(*) FROM usage v WHERE v.book_id = u.book_id AND v.id < u.id) >= p.total_chunks);`
 
 const editsTable = `CREATE TABLE edits (
   id         INTEGER PRIMARY KEY,
