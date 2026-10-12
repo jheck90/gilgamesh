@@ -82,3 +82,24 @@ func TestModelClientClaudeCodeDefault(t *testing.T) {
 		t.Errorf("model = %q, effort = %q; want claude-haiku-5-5 at high", client.Model(), res.Config.Effort)
 	}
 }
+
+// Approving a request for a Claude Code key would grant something that can
+// never be used.
+func TestKeyApproveRefusesClaudeCode(t *testing.T) {
+	t.Setenv("GMESH_SECRET", "")
+	t.Setenv("GMESH_PROVIDER", "claude-code")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-tok")
+	db := filepath.Join(t.TempDir(), "g.db")
+	gm := func(args ...string) error {
+		return run(context.Background(), append([]string{"-db", db}, args...), &bytes.Buffer{})
+	}
+	if err := gm("key", "status"); err != nil { // the first user is the admin
+		t.Fatal(err)
+	}
+	if err := gm("-user", "alice", "key", "request"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gm("key", "approve", "alice"); err == nil || !strings.Contains(err.Error(), "can't be borrowed") {
+		t.Errorf("approve: err = %v, want a refusal", err)
+	}
+}

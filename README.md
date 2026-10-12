@@ -157,8 +157,8 @@ add books.
 - **A Claude subscription** (a Claude Code key): `GMESH_PROVIDER=claude-code`
   runs each call through the `claude` CLI, so adding a book counts against
   your Claude plan's usage instead of API billing. Make a token with `claude
-  setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` (without one, the CLI's own
-  login is used). Use the `ghcr.io/jheck90/gilgamesh:claude-code` image,
+  setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN`, not `GMESH_API_KEY` (without
+  one, the CLI's own login is used). Use the `ghcr.io/jheck90/gilgamesh:claude-code` image,
   which includes the CLI; built from source, `claude` must be on the PATH.
   The CLI gets no tools, settings or MCP servers, and any
   `ANTHROPIC_API_KEY` is hidden from it so it can't bill the API. If you hit

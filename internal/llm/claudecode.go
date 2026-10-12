@@ -31,7 +31,7 @@ func newClaudeCode(c Config) *claudeCodeClient {
 func (c *claudeCodeClient) Provider() string { return ProviderClaudeCode }
 func (c *claudeCodeClient) Model() string    { return c.model }
 
-// env is gmesh's environment minus any Anthropic API credentials, which the
+// env is gmesh's environment minus any Anthropic API key, which the
 // CLI would otherwise prefer to the subscription, plus the key's token.
 func (c *claudeCodeClient) env() []string {
 	var env []string
@@ -87,21 +87,26 @@ func (c *claudeCodeClient) JSON(ctx context.Context, req Request) ([]byte, Usage
 			Output        int64 `json:"output_tokens"`
 		} `json:"usage"`
 	}
+	failed := func() error {
+		return fmt.Errorf("claude-code: %w: %s", runErr, strings.TrimSpace(stderr.String()))
+	}
 	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
 		if runErr != nil {
-			return nil, Usage{}, fmt.Errorf("claude: %v: %s", runErr, strings.TrimSpace(stderr.String()))
+			return nil, Usage{}, failed()
 		}
-		return nil, Usage{}, fmt.Errorf("claude: unreadable reply: %v", err)
+		return nil, Usage{}, fmt.Errorf("claude-code: unreadable reply: %w", err)
 	}
 	if res.IsError || runErr != nil {
-		msg := res.Result
-		if msg == "" {
-			msg = fmt.Sprintf("%v %s", runErr, strings.TrimSpace(stderr.String()))
+		if res.Result == "" && runErr != nil {
+			return nil, Usage{}, failed()
 		}
-		return nil, Usage{}, fmt.Errorf("claude: %s", msg)
+		if res.Result == "" {
+			return nil, Usage{}, fmt.Errorf("claude-code: failed (%s)", res.Subtype)
+		}
+		return nil, Usage{}, fmt.Errorf("claude-code: %s", res.Result)
 	}
 	if len(res.Output) == 0 || string(res.Output) == "null" {
-		return nil, Usage{}, fmt.Errorf("claude: no JSON in the reply (%s)", res.Subtype)
+		return nil, Usage{}, fmt.Errorf("claude-code: no JSON in the reply (%s)", res.Subtype)
 	}
 	u := Usage{InputTokens: res.Usage.Input + res.Usage.CacheRead + res.Usage.CacheCreation, OutputTokens: res.Usage.Output}
 	return res.Output, u, nil

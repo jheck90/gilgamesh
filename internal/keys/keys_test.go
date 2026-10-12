@@ -85,8 +85,8 @@ func TestClaudeCodeKeyIsNotBorrowed(t *testing.T) {
 			return "claude-code"
 		case "CLAUDE_CODE_OAUTH_TOKEN":
 			return "oauth-tok"
-		case "ANTHROPIC_API_KEY":
-			return "sk-env"
+		case "ANTHROPIC_API_KEY", "GMESH_API_KEY":
+			return "sk-env" // an API key must never be handed to the CLI as its token
 		}
 		return ""
 	})
