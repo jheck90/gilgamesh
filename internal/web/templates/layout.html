@@ -122,6 +122,19 @@
 {{template "picker" .}}
 {{template "foot" .}}{{end}}
 
+{{define "line"}}{{template "head" .}}
+<h1>How far down have you read?</h1>
+<p class="hint">Tap the last sentence you read on this page.</p>
+<form method="post" action="/b/{{.Book.ID}}/line">
+  <input type="hidden" name="first" value="{{.First}}">
+  <input type="hidden" name="last" value="{{.Last}}">
+  <ol class="lines">
+  {{range .Lines}}<li><button type="submit" name="ord" value="{{.Ord}}">{{.Text}}</button></li>{{end}}
+  </ol>
+  <button type="submit" name="ord" value="{{.Before}}">I haven’t started this page</button>
+</form>
+{{template "foot" .}}{{end}}
+
 {{define "entity"}}{{template "head" .}}
 <p class="kind">{{.Entity.Type}}</p>
 <h1>{{.Entity.Name}}</h1>

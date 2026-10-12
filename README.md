@@ -94,7 +94,8 @@ at the end of each chapter. Partway through one, snap the page you're on:
   book and moves you to its last whole sentence. A sentence cut off at the
   bottom counts as the next page's. If anything is revealed on the page (a
   fact, a name, someone new, a time marker), it can't know how far down
-  you've read, so it moves you to just before the page instead.
+  you've read, so it shows you the page's sentences and you tap the last
+  one you read, or "I haven't started this page".
 - **Or type the last 4 or more words you read** and tap "Snap" to move to
   the sentence they end in.
 

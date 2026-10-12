@@ -12,11 +12,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jheck90/gilgamesh/internal/store"
+	"golang.org/x/net/html"
 )
 
 func TestChapterLabels(t *testing.T) {
@@ -43,6 +45,17 @@ func TestChapterLabels(t *testing.T) {
 	}
 }
 
+// crawl is the text of the first book setup builds.
+var crawl = []store.Sentence{
+	{Ord: 0, ChapterIdx: 3, Text: "Carl woke to the sound of gulls."},
+	{Ord: 1, ChapterIdx: 3, Text: "It was Day 1."},
+	{Ord: 2, ChapterIdx: 3, Text: "“The tide always turns,” his mother used to say."},
+	{Ord: 3, ChapterIdx: 4, Text: "A hooded man watched from the dunes."},
+	{Ord: 4, ChapterIdx: 4, Text: "“He’s Mordecai,” someone whispered."},
+	{Ord: 5, ChapterIdx: 4, Text: "The tide always turns."},
+	{Ord: 6, ChapterIdx: 5, Text: "The end came quietly."},
+}
+
 func setup(t *testing.T, trust string, opts ...func(*Server)) (*httptest.Server, int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -59,16 +72,7 @@ func setup(t *testing.T, trust string, opts ...func(*Server)) (*httptest.Server,
 		{Idx: 4, Title: "II The Hooded Man Is Mordecai", FirstOrd: 3, LastOrd: 5},
 		{Idx: 5, Title: "The Fall of a Chieftain", FirstOrd: 6, LastOrd: 6},
 	}
-	sents := []store.Sentence{
-		{Ord: 0, ChapterIdx: 3, Text: "Carl woke to the sound of gulls."},
-		{Ord: 1, ChapterIdx: 3, Text: "It was Day 1."},
-		{Ord: 2, ChapterIdx: 3, Text: "“The tide always turns,” his mother used to say."},
-		{Ord: 3, ChapterIdx: 4, Text: "A hooded man watched from the dunes."},
-		{Ord: 4, ChapterIdx: 4, Text: "“He’s Mordecai,” someone whispered."},
-		{Ord: 5, ChapterIdx: 4, Text: "The tide always turns."},
-		{Ord: 6, ChapterIdx: 5, Text: "The end came quietly."},
-	}
-	bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "The Crawl", SHA256: "x", SourcePath: "x"}, chapters, sents, 1, 100)
+	bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "The Crawl", SHA256: "x", SourcePath: "x"}, chapters, crawl, 1, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +253,9 @@ func hasCamera(body string) bool {
 
 func TestSnapByTypedWords(t *testing.T) {
 	// Mordecai is named in sentence 4, so his card shows whether a snap
-	// stopped at the sentence before or got to the one naming him.
+	// stopped at the sentence before or got to the one naming him. Typed
+	// words never ask how far down the page the reader has got, even past a
+	// reveal: the reader has already said.
 	cases := []struct {
 		name, words, where string
 		metMordecai        bool
@@ -356,53 +362,122 @@ func snapPhoto(t *testing.T, srv *httptest.Server, path string, photo []byte) (i
 }
 
 func TestSnapByPhoto(t *testing.T) {
-	// Sentences 2 and 3 reveal nothing. Carl is met in sentence 0, Day 1
-	// is marked in 1, and Mordecai is met in 4.
-	cases := []struct {
-		name, page, where    string
-		metCarl, metMordecai bool
-	}{
+	// Sentences 2 and 3 reveal nothing, so none of these pages asks how far
+	// down the reader has got. Carl is met in sentence 0 and Mordecai in 4.
+	cases := []struct{ name, page, where string }{
 		{"nothing revealed: to the end of the page",
 			"“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 		{"a sentence cut off at the bottom belongs to the next page",
 			"“The tide always turns,” his mother used to say.\nA hooded man watched",
-			"Finished I The Sea-dog", true, false},
-		{"a reveal on the page: to the sentence before the page",
-			"A hooded man watched from the dunes. “He’s Mordecai,” someone whispered.",
-			"Finished I The Sea-dog", true, false},
-		{"a reveal on the book's first page: to before the book starts",
-			"Carl woke to the sound of gulls. It was Day 1.",
-			"Partway through I The Sea-dog", false, false},
+			"Finished I The Sea-dog"},
 		{"a reveal only in a cut-off sentence: to the end of the page",
 			"“The tide always turns,” his mother used to say. A hooded man watched from the dunes.\n“He’s Mordecai,”",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 		{"a running head and page number",
 			"THE CRAWL                17\nturns,” his mother used to say.\nA hooded man watched from the dunes.",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 		{"a word hyphenated across a line end",
 			"“The tide always turns,” his mother used to say.\nA hooded man watched from the du-\nnes.",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 		{"misread words, down to the page's last words",
 			"“Tbe tide always turns,’ his rnother used to say.\nA hooded man watched frorn the dunes.",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 		{"two facing pages",
 			"16 THE CRAWL\nturns,” his\nmother used to say.\n\nII 17\nA hooded man watched from the dunes.",
-			"Partway through II The Hooded Man Is Mordecai", true, false},
-		// Words before the match may be the misread end of the sentence
-		// before, so the page may hold that sentence's reveal. A running
-		// head can't be told from them.
-		{"misread words at the top: the sentence before may be on the page",
-			"Ii vvas Dav l. “The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
-			"Partway through I The Sea-dog", true, false},
-		{"a running head over a page that starts a sentence: so may the one before",
-			"THE CRAWL 17\n“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
-			"Partway through I The Sea-dog", true, false},
+			"Partway through II The Hooded Man Is Mordecai"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			srv, _ := setup(t, "")
 			code, body := snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			if code != 200 || !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("%d, want %q\n%s", code, c.where, body)
+			}
+			if !strings.Contains(body, `href="/b/1/e/1"`) || strings.Contains(body, `href="/b/1/e/2"`) {
+				t.Errorf("want Carl listed and Mordecai not:\n%s", body)
+			}
+			if strings.Contains(body, "Chieftain") {
+				t.Errorf("a later chapter title leaked:\n%s", body)
+			}
+		})
+	}
+}
+
+// notStarted answers the line question for a reader who hasn't read any of
+// the page yet.
+const notStarted = "I haven’t started this page"
+
+func TestPhotoOfAPageWithARevealAsksForTheLine(t *testing.T) {
+	// Carl is met in sentence 0, Day 1 is marked in 1, and Mordecai is met
+	// in 4.
+	cases := []struct {
+		name, page  string
+		first, last int // the sentences asked about
+	}{
+		{"a reveal on the page",
+			"A hooded man watched from the dunes. “He’s Mordecai,” someone whispered.", 3, 4},
+		{"a reveal on the book's first page",
+			"Carl woke to the sound of gulls. It was Day 1.", 0, 1},
+		{"a sentence cut off at the bottom isn't asked about",
+			"A hooded man watched from the dunes. “He’s Mordecai,” someone whispered.\nThe tide always", 3, 4},
+		// Words before the match may be the misread end of the sentence
+		// before, so the page may hold that sentence's reveal. A running
+		// head can't be told from them.
+		{"misread words at the top: the sentence before may be on the page",
+			"Ii vvas Dav l. “The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.", 1, 3},
+		{"a running head over a page that starts a sentence: so may the one before",
+			"THE CRAWL 17\n“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.", 1, 3},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv, _ := setup(t, "")
+			code, body := snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			var want []string
+			for _, se := range crawl[c.first : c.last+1] {
+				want = append(want, se.Text)
+			}
+			want = append(want, notStarted)
+			if got := labels(buttons(t, body)); code != 200 || !slices.Equal(got, want) {
+				t.Errorf("%d, asked\n%q\nwant\n%q\n%s", code, got, want, body)
+			}
+			for i, se := range crawl {
+				if (i < c.first || i > c.last) && strings.Contains(body, se.Text) {
+					t.Errorf("sentence %d isn't on the page but was shown:\n%s", i, body)
+				}
+			}
+			if strings.Contains(body, "/b/1/e/") || strings.Contains(body, "Chieftain") {
+				t.Errorf("the question showed a card or a later chapter title:\n%s", body)
+			}
+			if _, body := send(t, srv, "", "/b/1", nil); strings.Contains(body, `class="where"`) {
+				t.Errorf("asking moved the position:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestAnsweringTheLineQuestion(t *testing.T) {
+	// Carl is met in sentence 0, Day 1 is marked in 1, and Mordecai is met
+	// in 4.
+	mordecai := "A hooded man watched from the dunes. “He’s Mordecai,” someone whispered."
+	cases := []struct {
+		name, page, answer, where string
+		metCarl, metMordecai      bool
+	}{
+		{"a sentence before the reveal: the reveal stays hidden", mordecai,
+			"A hooded man watched from the dunes.", "Partway through II The Hooded Man Is Mordecai", true, false},
+		{"the sentence with the reveal", mordecai,
+			"“He’s Mordecai,” someone whispered.", "Partway through II The Hooded Man Is Mordecai", true, true},
+		{"not started: to the sentence before the page", mordecai,
+			notStarted, "Finished I The Sea-dog", true, false},
+		{"not started on the book's first page: to before the book starts", "Carl woke to the sound of gulls. It was Day 1.",
+			notStarted, "Partway through I The Sea-dog", false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv, _ := setup(t, "")
+			_, question := snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			code, body := tap(t, srv, question, c.answer)
 			if code != 200 || !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
 				t.Errorf("%d, want %q\n%s", code, c.where, body)
 			}
@@ -412,32 +487,150 @@ func TestSnapByPhoto(t *testing.T) {
 			if met := strings.Contains(body, `href="/b/1/e/2"`); met != c.metMordecai {
 				t.Errorf("Mordecai listed = %v, want %v\n%s", met, c.metMordecai, body)
 			}
-			if strings.Contains(body, "Chieftain") {
-				t.Errorf("a later chapter title leaked:\n%s", body)
+			if code, _ := send(t, srv, "", "/b/1/e/2", nil); !c.metMordecai && code != 404 {
+				t.Errorf("Mordecai's card returned %d before he's named", code)
 			}
 		})
 	}
 }
 
-func TestPhotoSnapStopsBeforeEachKindOfReveal(t *testing.T) {
+func TestLineAnswerOffThePageIsRejected(t *testing.T) {
+	srv, _ := setup(t, "")
+	send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"3"}})
+	// The page is sentences 3 and 4, so the answers are 2 (not started) to 4.
+	_, question := snapPhoto(t, srv, "/b/1/snap", photo("A hooded man watched from the dunes. “He’s Mordecai,” someone whispered."))
+	b := buttons(t, question)[0]
+	cases := []struct {
+		name string
+		set  url.Values
+	}{
+		{"a sentence after the page", url.Values{"ord": {"5"}}},
+		{"a sentence before the page", url.Values{"ord": {"1"}}},
+		{"no sentence", url.Values{"ord": {""}}},
+		{"no page", url.Values{"first": {""}, "last": {""}}},
+		{"a page that ends before it starts", url.Values{"first": {"4"}, "last": {"3"}, "ord": {"3"}}},
+		{"a page past the end of the book", url.Values{"first": {"3"}, "last": {"99"}, "ord": {"50"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			form := url.Values{}
+			for k, v := range b.form {
+				form[k] = v
+			}
+			for k, v := range c.set {
+				form[k] = v
+			}
+			if code, body := send(t, srv, "", b.action, form); code != 400 {
+				t.Errorf("got %d, want 400\n%s", code, body)
+			}
+			if _, body := send(t, srv, "", "/b/1", nil); !strings.Contains(body, `<p class="where">Finished I The Sea-dog</p>`) {
+				t.Errorf("the position moved:\n%s", body)
+			}
+		})
+	}
+}
+
+// button is a submit button on a page, with the form it sends.
+type button struct {
+	label, action string
+	form          url.Values
+}
+
+// buttons lists a page's submit buttons in order.
+func buttons(t *testing.T, page string) []button {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	attr := func(n *html.Node, key string) string {
+		for _, a := range n.Attr {
+			if a.Key == key {
+				return a.Val
+			}
+		}
+		return ""
+	}
+	var text func(n *html.Node) string
+	text = func(n *html.Node) string {
+		if n.Type == html.TextNode {
+			return n.Data
+		}
+		var b strings.Builder
+		for c := range n.ChildNodes() {
+			b.WriteString(text(c))
+		}
+		return b.String()
+	}
+	var out []button
+	var form *html.Node
+	for n := range doc.Descendants() {
+		if n.Type != html.ElementNode {
+			continue
+		}
+		switch n.Data {
+		case "form":
+			form = n
+		case "button":
+			if form == nil || attr(n, "type") == "button" {
+				continue
+			}
+			b := button{label: strings.TrimSpace(text(n)), action: attr(form, "action"), form: url.Values{}}
+			for in := range form.Descendants() {
+				if in.Type == html.ElementNode && in.Data == "input" && attr(in, "type") != "file" && attr(in, "name") != "" {
+					b.form.Set(attr(in, "name"), attr(in, "value"))
+				}
+			}
+			if name := attr(n, "name"); name != "" {
+				b.form.Set(name, attr(n, "value"))
+			}
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+func labels(bs []button) []string {
+	var out []string
+	for _, b := range bs {
+		out = append(out, b.label)
+	}
+	return out
+}
+
+// tap taps the button labelled label on page, as the default reader, and
+// returns the page it lands on.
+func tap(t *testing.T, srv *httptest.Server, page, label string) (int, string) {
+	t.Helper()
+	for _, b := range buttons(t, page) {
+		if b.label == label {
+			return send(t, srv, "", b.action, b.form)
+		}
+	}
+	t.Fatalf("no button %q on the page:\n%s", label, page)
+	return 0, ""
+}
+
+func TestEachKindOfRevealAsksForTheLine(t *testing.T) {
 	// The page snapped is chapter 2, sentences 1 and 2. Ada is met in
-	// sentence 0, and each case puts one reveal in sentence 2.
+	// sentence 0, and each case puts one reveal in sentence 2, which the
+	// reader sees at path once they've read that far.
 	ada := func(rs ...store.AliasRec) store.NewEntity {
 		return store.NewEntity{Name: "Ada", Type: "character", FirstOrd: 0, Aliases: rs}
 	}
 	cases := []struct {
-		name  string
-		chunk store.ChunkWrite
-		title bool // show Ada by her alias
-		where string
+		name         string
+		chunk        store.ChunkWrite
+		title        bool   // show Ada by her alias
+		path, reveal string // empty when nothing is revealed
 	}{
-		{"nothing revealed", store.ChunkWrite{New: []store.NewEntity{ada()}}, false, "Finished Chapter 2"},
+		{"nothing revealed", store.ChunkWrite{New: []store.NewEntity{ada()}}, false, "", ""},
 		{"a fact", store.ChunkWrite{New: []store.NewEntity{{Name: "Ada", Type: "character", FirstOrd: 0,
-			Facts: []store.FactRec{{Text: "Ada hears the ferry.", Ord: 2, Evidence: []int{2}}}}}}, false, "Finished Chapter 1"},
-		{"an alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "the keeper", Ord: 2})}}, false, "Finished Chapter 1"},
-		{"a title alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "Keeper Ada", Ord: 2})}}, true, "Finished Chapter 1"},
-		{"a new entity", store.ChunkWrite{New: []store.NewEntity{ada(), {Name: "the ferry", Type: "term", FirstOrd: 2}}}, false, "Finished Chapter 1"},
-		{"a time marker", store.ChunkWrite{New: []store.NewEntity{ada()}, Markers: []store.MarkerRec{{Label: "Night 1", Ord: 2}}}, false, "Finished Chapter 1"},
+			Facts: []store.FactRec{{Text: "Ada hears the ferry.", Ord: 2, Evidence: []int{2}}}}}}, false, "/b/1/e/1", "Ada hears the ferry."},
+		{"an alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "the keeper", Ord: 2})}}, false, "/b/1", "the keeper"},
+		{"a title alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "Keeper Ada", Ord: 2})}}, true, "/b/1", "Keeper Ada"},
+		{"a new entity", store.ChunkWrite{New: []store.NewEntity{ada(), {Name: "the ferry", Type: "term", FirstOrd: 2}}}, false, "/b/1", "the ferry"},
+		{"a time marker", store.ChunkWrite{New: []store.NewEntity{ada()}, Markers: []store.MarkerRec{{Label: "Night 1", Ord: 2}}}, false, "/b/1/timeline", "Night 1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -480,10 +673,28 @@ func TestPhotoSnapStopsBeforeEachKindOfReveal(t *testing.T) {
 				}
 			}
 			srv := serve(t, st, "")
-			_, body := snapPhoto(t, srv, "/b/1/snap", photo(
-				"The lamp had to be lit before the ships came in.\nBelow the cliff the ferry sounded its horn twice."))
-			if !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
-				t.Errorf("want %q\n%s", c.where, body)
+			lit, horn := "The lamp had to be lit before the ships came in.", "Below the cliff the ferry sounded its horn twice."
+			page := photo(lit + "\n" + horn)
+			_, body := snapPhoto(t, srv, "/b/1/snap", page)
+			if c.reveal == "" {
+				if !strings.Contains(body, `<p class="where">Finished Chapter 2</p>`) {
+					t.Errorf("nothing revealed, but it didn't move to the end of the page:\n%s", body)
+				}
+				return
+			}
+			if got, want := labels(buttons(t, body)), []string{lit, horn, notStarted}; !slices.Equal(got, want) {
+				t.Fatalf("asked %q, want %q\n%s", got, want, body)
+			}
+			if _, body := tap(t, srv, body, lit); !strings.Contains(body, `<p class="where">Partway through Chapter 2</p>`) {
+				t.Errorf("tapped the first sentence:\n%s", body)
+			}
+			if _, body := send(t, srv, "", c.path, nil); strings.Contains(body, c.reveal) {
+				t.Errorf("%q shows before its sentence is read:\n%s", c.reveal, body)
+			}
+			_, body = snapPhoto(t, srv, "/b/1/snap", page)
+			tap(t, srv, body, horn)
+			if _, body := send(t, srv, "", c.path, nil); !strings.Contains(body, c.reveal) {
+				t.Errorf("%q doesn't show once its sentence is read:\n%s", c.reveal, body)
 			}
 		})
 	}

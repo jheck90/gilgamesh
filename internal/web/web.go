@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /b/{book}/pos", s.setPos)
 	mux.HandleFunc("POST /b/{book}/next", s.next)
 	mux.HandleFunc("POST /b/{book}/snap", s.snap)
+	mux.HandleFunc("POST /b/{book}/line", s.line)
 	mux.HandleFunc("GET /b/{book}/e/{entity}", s.entity)
 	mux.HandleFunc("GET /b/{book}/timeline", s.timeline)
 	return headers(mux)
@@ -465,8 +466,9 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ord int
+	var ask []store.Sentence // a page to ask the reader how far down they've read
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		ord, err = s.snapPhoto(w, r, rd.book.ID, sents)
+		ord, ask, err = s.snapPhoto(w, r, rd.book.ID, sents)
 	} else {
 		ord, err = snapWords(r, sents)
 	}
@@ -493,7 +495,47 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if ask != nil {
+		// Only the page's own sentences: the reader has those in front of
+		// them already.
+		first, last := ask[0].Ord, ask[len(ask)-1].Ord
+		s.render(w, "line", map[string]any{
+			"Title":  "How far down have you read?",
+			"Book":   rd.book,
+			"Lines":  ask,
+			"First":  first,
+			"Last":   last,
+			"Before": first - 1,
+		})
+		return
+	}
 	if err := s.Store.SetPosition(ctx, user.ID, rd.book.ID, ord); err != nil {
+		s.fail(w, err)
+		return
+	}
+	toBook(w, r, rd)
+}
+
+// line moves the position to the sentence the reader tapped on the line
+// question, or to just before the page if they haven't started it. The
+// question sends back the page it asked about, so nothing is kept between
+// the two; an answer off that page, or a page off the book, is refused.
+func (s *Server) line(w http.ResponseWriter, r *http.Request) {
+	user, rd, err := s.readingFor(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	first, err1 := strconv.Atoi(r.FormValue("first"))
+	last, err2 := strconv.Atoi(r.FormValue("last"))
+	ord, err3 := strconv.Atoi(r.FormValue("ord"))
+	if err := cmp.Or(err1, err2, err3); err != nil || len(rd.chapters) == 0 ||
+		first < 0 || first > last || last > rd.chapters[len(rd.chapters)-1].LastOrd ||
+		ord < first-1 || ord > last {
+		s.fail(w, httpError{http.StatusBadRequest, "That line isn’t on the page."})
+		return
+	}
+	if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -525,45 +567,44 @@ func snapWords(r *http.Request, sents []store.Sentence) (int, error) {
 
 // snapPhoto moves to the end of the page in a photo: its last sentence
 // shown whole. If anything is revealed on the page, the reader may not have
-// got that far down, so it moves to just before the page instead. The
-// photo is held in memory for this request only.
-func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (int, error) {
+// got that far down, so it returns the page's sentences to ask them
+// instead. The photo is held in memory for this request only.
+func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (int, []store.Sentence, error) {
 	photo, err := readPhoto(w, r, cmp.Or(s.maxPhoto, 20<<20))
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), cmp.Or(s.photoTimeout, 30*time.Second))
 	defer cancel()
 	pageText, err := s.Photos.ReadPhoto(ctx, photo)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
+		return 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
 	}
 	if err != nil {
 		log.Printf("web: read photo: %v", err)
-		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
+		return 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
 			msg: "Photo snaps aren’t working here right now. " + typeInstead}
 	}
 	page, ok := text.MatchPage(pageText, texts(sents))
 	if !ok {
-		return 0, tryAgain{code: http.StatusOK,
+		return 0, nil, tryAgain{code: http.StatusOK,
 			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}
 	}
 	end := page.Last
 	if page.Cut {
 		end--
 	}
-	before := sents[page.First].Ord - 1
 	if end < page.First {
-		return before, nil // no sentence shown whole
+		return sents[page.First].Ord - 1, nil, nil // no sentence shown whole
 	}
 	revealed, err := s.Store.RevealsBetween(r.Context(), bookID, sents[page.First].Ord, sents[end].Ord)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	if revealed {
-		return before, nil
+		return 0, sents[page.First : end+1], nil
 	}
-	return sents[end].Ord, nil
+	return sents[end].Ord, nil, nil
 }
 
 const typeInstead = "Type the last 4 or more words you read instead, or pick a chapter."
