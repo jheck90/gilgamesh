@@ -466,9 +466,9 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ord int
-	var ask []store.Sentence // a page to ask the reader how far down they've read
+	var question []store.Sentence // the page, when the snap must ask how far down the reader has got
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		ord, ask, err = s.snapPhoto(w, r, rd.book.ID, sents)
+		ord, question, err = s.snapPhoto(w, r, rd.book.ID, sents)
 	} else {
 		ord, err = snapWords(r, sents)
 	}
@@ -495,14 +495,14 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if ask != nil {
+	if question != nil {
 		// Only the page's own sentences: the reader has those in front of
 		// them already.
-		first, last := ask[0].Ord, ask[len(ask)-1].Ord
+		first, last := question[0].Ord, question[len(question)-1].Ord
 		s.render(w, "line", map[string]any{
 			"Title":  "How far down have you read?",
 			"Book":   rd.book,
-			"Lines":  ask,
+			"Lines":  question,
 			"First":  first,
 			"Last":   last,
 			"Before": first - 1,
@@ -532,7 +532,7 @@ func (s *Server) line(w http.ResponseWriter, r *http.Request) {
 	if err := cmp.Or(err1, err2, err3); err != nil || len(rd.chapters) == 0 ||
 		first < 0 || first > last || last > rd.chapters[len(rd.chapters)-1].LastOrd ||
 		ord < first-1 || ord > last {
-		s.fail(w, httpError{http.StatusBadRequest, "That line isn’t on the page."})
+		s.fail(w, httpError{http.StatusBadRequest, "That sentence isn’t on the page."})
 		return
 	}
 	if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
@@ -567,9 +567,9 @@ func snapWords(r *http.Request, sents []store.Sentence) (int, error) {
 
 // snapPhoto moves to the end of the page in a photo: its last sentence
 // shown whole. If anything is revealed on the page, the reader may not have
-// got that far down, so it returns the page's sentences to ask them
-// instead. The photo is held in memory for this request only.
-func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (int, []store.Sentence, error) {
+// got that far down, so instead of an ord it returns the page's sentences
+// for the line question. The photo is held in memory for this request only.
+func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (ord int, question []store.Sentence, err error) {
 	photo, err := readPhoto(w, r, cmp.Or(s.maxPhoto, 20<<20))
 	if err != nil {
 		return 0, nil, err

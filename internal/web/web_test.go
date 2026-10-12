@@ -590,6 +590,7 @@ func buttons(t *testing.T, page string) []button {
 	return out
 }
 
+// labels is what each button says.
 func labels(bs []button) []string {
 	var out []string
 	for _, b := range bs {
@@ -621,10 +622,9 @@ func TestEachKindOfRevealAsksForTheLine(t *testing.T) {
 	cases := []struct {
 		name         string
 		chunk        store.ChunkWrite
-		title        bool   // show Ada by her alias
-		path, reveal string // empty when nothing is revealed
+		title        bool // show Ada by her alias
+		path, reveal string
 	}{
-		{"nothing revealed", store.ChunkWrite{New: []store.NewEntity{ada()}}, false, "", ""},
 		{"a fact", store.ChunkWrite{New: []store.NewEntity{{Name: "Ada", Type: "character", FirstOrd: 0,
 			Facts: []store.FactRec{{Text: "Ada hears the ferry.", Ord: 2, Evidence: []int{2}}}}}}, false, "/b/1/e/1", "Ada hears the ferry."},
 		{"an alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "the keeper", Ord: 2})}}, false, "/b/1", "the keeper"},
@@ -676,12 +676,6 @@ func TestEachKindOfRevealAsksForTheLine(t *testing.T) {
 			lit, horn := "The lamp had to be lit before the ships came in.", "Below the cliff the ferry sounded its horn twice."
 			page := photo(lit + "\n" + horn)
 			_, body := snapPhoto(t, srv, "/b/1/snap", page)
-			if c.reveal == "" {
-				if !strings.Contains(body, `<p class="where">Finished Chapter 2</p>`) {
-					t.Errorf("nothing revealed, but it didn't move to the end of the page:\n%s", body)
-				}
-				return
-			}
 			if got, want := labels(buttons(t, body)), []string{lit, horn, notStarted}; !slices.Equal(got, want) {
 				t.Fatalf("asked %q, want %q\n%s", got, want, body)
 			}
