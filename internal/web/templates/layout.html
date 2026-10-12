@@ -48,6 +48,7 @@
   </li>
 {{end}}
 </ul>
+{{if .Queue}}<p class="meta"><a href="/adding">Books being added</a></p>{{end}}
 {{template "foot" .}}{{end}}
 
 {{define "book"}}{{template "head" .}}
@@ -189,4 +190,39 @@
 <ol class="timeline">
 {{range .Marks}}<li><span class="name">{{.Label}}</span> <span class="meta">{{.Where}}</span></li>{{else}}<p class="empty">No in-world days or dates yet.</p>{{end}}
 </ol>
+{{template "foot" .}}{{end}}
+
+{{define "adding"}}{{template "head" .}}
+<h1>Books being added</h1>
+{{with .Adds}}
+<ul class="adds">
+{{range .}}
+  <li>
+    <span class="title">{{.Name}}</span>
+    <span class="meta">{{.State}}{{with .Call}} · {{.}}{{end}} · started by {{.Started}}</span>
+    {{with .Reason}}<span class="meta">{{.}}</span>{{end}}
+    {{if .Yours}}
+    <div class="row">
+      {{if .CanPause}}<form method="post" action="/adding/{{.ID}}/pause"><button type="submit">Pause</button></form>{{end}}
+      {{if eq .State "Paused"}}<form method="post" action="/adding/{{.ID}}/resume"><button type="submit">Resume</button></form>{{end}}
+      {{if ne .State "Done"}}<form method="post" action="/adding/{{.ID}}/cancel"><button type="submit">Cancel</button></form>{{end}}
+    </div>
+    {{end}}
+  </li>
+{{end}}
+</ul>
+{{else}}
+<p class="empty">No books are being added.</p>
+{{end}}
+<p><a href="/">Back to your books</a></p>
+{{template "foot" .}}{{end}}
+
+{{define "cancel"}}{{template "head" .}}
+<h1>Cancel adding {{.Add.Name}}?</h1>
+<p>{{if .Started}}This removes the partly added book, its notes, and everything first met in it, as <code>gmesh rm</code> does.{{else}}This takes it out of the queue.{{end}}</p>
+<form method="post" action="/adding/{{.Add.ID}}/cancel" class="row">
+  <input type="hidden" name="confirm" value="yes">
+  <button class="primary" type="submit">Cancel adding</button>
+</form>
+<p><a href="/adding">Keep it</a></p>
 {{template "foot" .}}{{end}}

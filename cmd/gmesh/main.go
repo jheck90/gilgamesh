@@ -32,8 +32,9 @@ Books
   chapters BOOK            list a book's chapters and their numbers
   rm BOOK --yes            remove a book and everything noted from it
 
-Reading (nothing here calls a model)
-  serve [--addr :8080]     the reading web app (installable on a phone)
+Reading (only adding books ever calls a model)
+  serve [--addr :8080]     the reading web app (installable on a phone); also adds
+                           books queued from it in the background, one at a time
   pos BOOK [--chapter N]   show or set where you are
   entities BOOK            everyone and everything you've met so far
   card BOOK NAME           what you know about NAME so far

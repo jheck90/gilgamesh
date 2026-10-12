@@ -181,15 +181,3 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("status: %s", out)
 	}
 }
-
-func TestParseSkip(t *testing.T) {
-	got, err := parseSkip("1-3, 40")
-	if err != nil || len(got) != 4 || !got[1] || !got[3] || !got[40] || got[4] {
-		t.Errorf("parseSkip = %v, %v", got, err)
-	}
-	for _, bad := range []string{"x", "3-1", "0", "2-"} {
-		if _, err := parseSkip(bad); err == nil {
-			t.Errorf("parseSkip(%q) should fail", bad)
-		}
-	}
-}

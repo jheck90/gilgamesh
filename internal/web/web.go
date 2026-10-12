@@ -1,6 +1,7 @@
 // Package web serves the reading side of Gilgamesh: set where you are,
-// browse who and what you've met, and open a card. Nothing here calls a
-// model, and nothing past the reader's position is ever rendered.
+// browse who and what you've met, and open a card. Reading never calls a
+// model, and nothing past the reader's position is ever rendered. Books
+// being added in the background can be watched, paused and cancelled.
 package web
 
 import (
@@ -20,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jheck90/gilgamesh/internal/adding"
 	"github.com/jheck90/gilgamesh/internal/store"
 	"github.com/jheck90/gilgamesh/internal/text"
 )
@@ -39,6 +41,9 @@ type Server struct {
 	DefaultUser string
 	// Photos reads the text off a snapped photo of a page.
 	Photos PhotoReader
+	// Adding is the queue of books being added in the background; nil
+	// leaves out the queue page.
+	Adding *adding.Queue
 
 	// maxPhoto caps a photo's size in bytes, and photoTimeout how long
 	// reading one may take. Zero means 20 MB and 30 seconds.
@@ -80,6 +85,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /b/{book}/back", s.back)
 	mux.HandleFunc("GET /b/{book}/e/{entity}", s.entity)
 	mux.HandleFunc("GET /b/{book}/timeline", s.timeline)
+	if s.Adding != nil {
+		mux.HandleFunc("GET /adding", s.addingQueue)
+		mux.HandleFunc("POST /adding/{id}/pause", s.pauseAdding)
+		mux.HandleFunc("POST /adding/{id}/resume", s.resumeAdding)
+		mux.HandleFunc("POST /adding/{id}/cancel", s.cancelAdding)
+	}
 	return headers(mux)
 }
 
@@ -162,7 +173,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row{Book: b, Where: rd.where(), Ready: p.Done()})
 	}
-	s.render(w, "home", map[string]any{"Title": "Gilgamesh", "Books": rows})
+	s.render(w, "home", map[string]any{"Title": "Gilgamesh", "Books": rows, "Queue": s.Adding != nil})
 }
 
 // reading is a reader's view of one book.

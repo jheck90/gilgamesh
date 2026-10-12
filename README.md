@@ -199,6 +199,18 @@ encrypted at rest. A reader without a key can `gmesh key request` to use the
 admin's key. The first user created is the admin, and approves with
 `gmesh key approve NAME --cap TOKENS` (a monthly cap; leave it off for none).
 
+`serve` can also add books in the background, one at a time across the
+instance; the rest wait in line. Each runs on the key of the reader who
+started it, checked again before every model call, so a revoked loan or a
+used-up allowance pauses it with the reason and the next book starts.
+"Books being added", linked from the home page, shows who started each,
+which call it's on and its state. The reader who started it, or the admin,
+can pause, resume or cancel it there; cancelling removes the partly added
+book, as `gmesh rm` does. Killing the server loses nothing: it picks up at
+the next call when it starts again. Give `serve` the same `GMESH_SECRET`
+and instance key as the CLI. (Picking a book to add from the web app comes
+with the library page.)
+
 ## Layout
 
 | Path | What |
@@ -212,6 +224,7 @@ admin's key. The first user created is the admin, and approves with
 | `internal/store` | SQLite schema and queries; positions are sentence numbers |
 | `internal/llm` | Anthropic (official Go SDK) and OpenAI-compatible clients |
 | `internal/keys`, `internal/secrets` | whose key pays, and keys at rest |
+| `internal/adding` | turning an EPUB into a stored book, and the background queue `serve` adds books with |
 | `internal/estimate` | the price range before adding a book, and the built-in prices |
 | `internal/web` | the reading web app (server-rendered, installable) |
 

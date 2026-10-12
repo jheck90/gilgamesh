@@ -171,3 +171,23 @@ CREATE TABLE usage (
   created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX usage_user ON usage(user_id, created_at);
+
+-- Books waiting to be added in the background by `gmesh serve`, one at a
+-- time in id order. Each runs on the key of the reader who started it.
+CREATE TABLE add_queue (
+  id           INTEGER PRIMARY KEY,
+  user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  path         TEXT    NOT NULL,
+  sha256       TEXT    NOT NULL, -- of the file when confirmed; a changed file isn't read
+  series       TEXT    NOT NULL,
+  series_index REAL    NOT NULL,
+  skip         TEXT    NOT NULL DEFAULT '', -- sections left out, like "1-3,40"
+  chunk_words  INTEGER NOT NULL,
+  model        TEXT    NOT NULL DEFAULT '',
+  effort       TEXT    NOT NULL DEFAULT '',
+  then_edit    INTEGER NOT NULL DEFAULT 0,
+  state        TEXT    NOT NULL DEFAULT 'waiting' CHECK (state IN ('waiting', 'adding', 'editing', 'paused', 'done')),
+  reason       TEXT    NOT NULL DEFAULT '', -- why it's paused
+  book_id      INTEGER REFERENCES books(id) ON DELETE SET NULL,
+  created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

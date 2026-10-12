@@ -2,28 +2,22 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
+	"github.com/jheck90/gilgamesh/internal/adding"
 	"github.com/jheck90/gilgamesh/internal/epub"
 	"github.com/jheck90/gilgamesh/internal/estimate"
 	"github.com/jheck90/gilgamesh/internal/extract"
 	"github.com/jheck90/gilgamesh/internal/keys"
 	"github.com/jheck90/gilgamesh/internal/llm"
 	"github.com/jheck90/gilgamesh/internal/store"
-	"github.com/jheck90/gilgamesh/internal/text"
 )
-
-// Sections shorter than this are title pages and separators, not chapters.
-const minSectionWords = 20
 
 func (a *app) ingest(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("ingest", flag.ContinueOnError)
@@ -50,15 +44,15 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	skip, err := parseSkip(*skipList)
+	skip, err := adding.ParseSkip(*skipList)
 	if err != nil {
 		return err
 	}
-	chapters, sentences, plan := prepare(eb, skip)
+	chapters, sentences, plan := adding.Prepare(eb, skip)
 	if len(sentences) == 0 {
 		return errors.New("no readable text found; DRM-protected books aren't supported")
 	}
-	seriesName, seriesIndex := seriesOf(eb, *series, *index)
+	seriesName, seriesIndex := adding.SeriesOf(eb, *series, *index)
 	nChunks := extract.CountChunks(chapters, sentences, *chunkWords)
 	words := 0
 	for _, s := range sentences {
@@ -74,11 +68,11 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if *dry {
 		summary()
 		for _, sec := range plan {
-			note := fmt.Sprintf("%d words", sec.words)
-			if sec.skipped != "" {
-				note += ", skipped: " + sec.skipped
+			note := fmt.Sprintf("%d words", sec.Words)
+			if sec.Skipped != "" {
+				note += ", skipped: " + sec.Skipped
 			}
-			fmt.Fprintf(a.out, "  %3d  %s (%s)\n", sec.n, sec.title, note)
+			fmt.Fprintf(a.out, "  %3d  %s (%s)\n", sec.N, sec.Title, note)
 		}
 		fmt.Fprintln(a.out, "check the start and end for front matter or a preview of the next book, and leave them out with --skip")
 		return a.showPrice(ctx, estimate.Book{Words: words, Calls: nChunks}, *model, *effort, *prices)
@@ -92,7 +86,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	sha, err := fileSHA(path)
+	sha, err := adding.FileSHA(path)
 	if err != nil {
 		return err
 	}
@@ -176,7 +170,7 @@ func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User,
 	if err != nil {
 		return nil, res, err
 	}
-	res.Config = runConfig(res.Config, model, anthropicDefault, effort)
+	res.Config = adding.RunConfig(res.Config, model, anthropicDefault, effort)
 	client, err := llm.New(res.Config)
 	if err != nil {
 		return nil, res, err
@@ -191,21 +185,6 @@ func resolveKey(ctx context.Context, st *store.Store, user store.User) (keys.Res
 		return keys.Resolved{}, err
 	}
 	return keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
-}
-
-// runConfig sets the model a run uses on a key: the one asked for, else the
-// key's own, else (on Anthropic or Claude Code) the command's default.
-func runConfig(c llm.Config, model, anthropicDefault, effort string) llm.Config {
-	if model != "" {
-		c.Model = model
-	}
-	if p := c.Provider; p == llm.ProviderAnthropic || p == llm.ProviderClaudeCode {
-		if c.Model == "" {
-			c.Model = anthropicDefault
-		}
-		c.Effort = effort
-	}
-	return c
 }
 
 // showPrice estimates adding b, and editing it afterwards, on the models
@@ -241,7 +220,7 @@ func (a *app) showPrice(ctx context.Context, b estimate.Book, model, effort, pri
 		return estimate.Model{Provider: c.Provider, Name: c.Model, Effort: c.Effort}
 	}
 	ingest, edit, err := estimate.ForBook(ctx, st, b,
-		modelOf(runConfig(cfg, model, llm.DefaultIngestModel, effort)), modelOf(runConfig(cfg, "", llm.DefaultAnthropicModel, "medium")), prices)
+		modelOf(adding.RunConfig(cfg, model, llm.DefaultIngestModel, effort)), modelOf(adding.RunConfig(cfg, "", llm.DefaultAnthropicModel, "medium")), prices)
 	if err != nil {
 		return err
 	}
@@ -305,106 +284,6 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
-}
-
-type planned struct {
-	n       int
-	title   string
-	words   int
-	skipped string
-}
-
-// prepare numbers every sentence in reading order and turns sections into
-// chapters. A chapter keeps its section number, so the numbers --dry-run
-// shows stay the chapter numbers even when some sections are skipped.
-func prepare(b *epub.Book, skip map[int]bool) ([]store.Chapter, []store.Sentence, []planned) {
-	var chapters []store.Chapter
-	var sentences []store.Sentence
-	var plan []planned
-	para := 0
-	for i, sec := range b.Sections {
-		n := i + 1
-		var sents []store.Sentence
-		words := 0
-		for _, p := range sec.Paragraphs {
-			for _, s := range text.Split(p) {
-				sents = append(sents, store.Sentence{Ord: len(sentences) + len(sents), ChapterIdx: n, Para: para, Text: s})
-				words += len(strings.Fields(s))
-			}
-			para++
-		}
-		title := sec.Title
-		if title == "" {
-			title = fmt.Sprintf("Section %d", n)
-		}
-		p := planned{n: n, title: title, words: words}
-		switch {
-		case skip[n]:
-			p.skipped = "--skip"
-		case words < minSectionWords:
-			p.skipped = "too short"
-		}
-		plan = append(plan, p)
-		if p.skipped != "" {
-			continue
-		}
-		chapters = append(chapters, store.Chapter{Idx: n, Title: title, FirstOrd: sents[0].Ord, LastOrd: sents[len(sents)-1].Ord})
-		sentences = append(sentences, sents...)
-	}
-	return chapters, sentences, plan
-}
-
-// parseSkip reads a list like "1-3,40".
-func parseSkip(s string) (map[int]bool, error) {
-	out := map[int]bool{}
-	for _, part := range strings.Split(s, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		lo, hi, isRange := strings.Cut(part, "-")
-		a, err1 := strconv.Atoi(strings.TrimSpace(lo))
-		b, err2 := a, error(nil)
-		if isRange {
-			b, err2 = strconv.Atoi(strings.TrimSpace(hi))
-		}
-		if err1 != nil || err2 != nil || a < 1 || b < a {
-			return nil, fmt.Errorf("can't read --skip %q", part)
-		}
-		for i := a; i <= b; i++ {
-			out[i] = true
-		}
-	}
-	return out, nil
-}
-
-func seriesOf(b *epub.Book, name string, index float64) (string, float64) {
-	if name == "" {
-		name = b.Series
-	}
-	if name == "" {
-		name = b.Title
-	}
-	if index == 0 {
-		index = b.SeriesIndex
-	}
-	if index == 0 {
-		index = 1
-	}
-	return name, index
-}
-
-func fileSHA(path string) (string, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func (a *app) rm(ctx context.Context, args []string) error {

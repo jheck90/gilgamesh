@@ -65,7 +65,7 @@ func TestMigrateUsageKinds(t *testing.T) {
 	u, _ := s.EnsureUser(ctx, "default")
 	done := addBook(t, s, sid, 1, "One", 10) // one chunk
 	reading := addBook(t, s, sid, 2, "Two", 10)
-	if _, err := s.db.Exec(`ALTER TABLE usage DROP COLUMN kind; ALTER TABLE usage DROP COLUMN effort; PRAGMA user_version = 3;
+	if _, err := s.db.Exec(`DROP TABLE add_queue; ALTER TABLE usage DROP COLUMN kind; ALTER TABLE usage DROP COLUMN effort; PRAGMA user_version = 3;
 		UPDATE ingest_progress SET next_chunk = 1 WHERE book_id = ?1;
 		UPDATE ingest_progress SET total_chunks = 3, next_chunk = 1 WHERE book_id = ?2;`, done.ID, reading.ID); err != nil {
 		t.Fatal(err)

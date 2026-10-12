@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
@@ -17,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jheck90/gilgamesh/internal/adding"
+	"github.com/jheck90/gilgamesh/internal/keys"
 	"github.com/jheck90/gilgamesh/internal/store"
 	"golang.org/x/net/html"
 )
@@ -1170,5 +1173,62 @@ func TestPhotoSnapsLogTheirScore(t *testing.T) {
 				t.Errorf("want %q logged:\n%s", c.want, logged)
 			}
 		})
+	}
+}
+
+func TestAddingQueue(t *testing.T) {
+	var q *adding.Queue
+	srv, _ := setup(t, "Remote-User", func(s *Server) {
+		q = &adding.Queue{Store: s.Store, Env: keys.Env(func(k string) string {
+			return map[string]string{"GMESH_PROVIDER": "openai", "GMESH_BASE_URL": "http://fake", "GMESH_MODEL": "fake"}[k]
+		})}
+		s.Adding = q
+	})
+	ctx := context.Background()
+	send(t, srv, "default", "/", nil) // the first reader is the admin
+	send(t, srv, "alice", "/", nil)
+	admin, _, _ := q.Store.UserByName(ctx, "default")
+	// Nothing runs the queue here, so the entry stays waiting.
+	id, err := q.Start(ctx, admin, store.QueuedAdd{Path: "/media/books/Crawl.epub", SHA256: "abc", Series: "Crawl", SeriesIndex: 1, ChunkWords: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/adding/%d", id)
+
+	if _, body := send(t, srv, "alice", "/", nil); !strings.Contains(body, `href="/adding"`) {
+		t.Errorf("home has no link to the queue:\n%s", body)
+	}
+	_, body := send(t, srv, "alice", "/adding", nil)
+	if !strings.Contains(body, "Crawl.epub") || !strings.Contains(body, "default") || !strings.Contains(body, "Waiting") {
+		t.Errorf("queue as alice:\n%s", body)
+	}
+	if strings.Contains(body, path+"/pause") {
+		t.Errorf("alice is offered to pause the admin's book:\n%s", body)
+	}
+	if code, _ := send(t, srv, "alice", path+"/pause", url.Values{}); code != http.StatusForbidden {
+		t.Errorf("alice pausing the admin's book: %d, want 403", code)
+	}
+
+	_, body = send(t, srv, "default", "/adding", nil)
+	if !strings.Contains(body, `action="`+path+`/pause"`) {
+		t.Errorf("the admin can't pause:\n%s", body)
+	}
+	_, body = send(t, srv, "default", path+"/pause", url.Values{})
+	if !strings.Contains(body, "Paused") || !strings.Contains(body, "paused by default") || !strings.Contains(body, `action="`+path+`/resume"`) {
+		t.Errorf("after pausing:\n%s", body)
+	}
+	if _, body = send(t, srv, "default", path+"/resume", url.Values{}); !strings.Contains(body, "Waiting") {
+		t.Errorf("after resuming:\n%s", body)
+	}
+
+	_, body = send(t, srv, "default", path+"/cancel", url.Values{})
+	if !strings.Contains(body, "Cancel adding Crawl.epub?") || !strings.Contains(body, `name="confirm"`) {
+		t.Errorf("cancelling should ask first:\n%s", body)
+	}
+	if _, ok, _ := q.Store.QueuedAddByID(ctx, id); !ok {
+		t.Fatal("cancelled without confirming")
+	}
+	if _, body = send(t, srv, "default", path+"/cancel", url.Values{"confirm": {"yes"}}); strings.Contains(body, "Crawl.epub") {
+		t.Errorf("still listed after cancelling:\n%s", body)
 	}
 }
