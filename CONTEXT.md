@@ -54,6 +54,10 @@ _Avoid_: date, event
 
 ### Adding books
 
+**Library**:
+The directory of EPUB files an instance can add books from. A file there is not a book until it's added.
+_Avoid_: shelf, collection
+
 **Key**:
 What pays for the model calls that add a book: an **API key** (Anthropic or any OpenAI-compatible service) or a **Claude Code key** (a Claude subscription's login token). Reading never needs one.
 _Avoid_: credential, token
