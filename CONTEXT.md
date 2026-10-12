@@ -51,3 +51,13 @@ _Avoid_: nickname
 **Time marker**:
 A point in the story's own timeline ("Day 1", "Year 2,000"), revealed where the book states it.
 _Avoid_: date, event
+
+### Adding books
+
+**Key**:
+What pays for the model calls that add a book: an **API key** (Anthropic or any OpenAI-compatible service) or a **Claude Code key** (a Claude subscription's login token). Reading never needs one.
+_Avoid_: credential, token
+
+**Borrowing**:
+A reader using someone else's key, with the owner's approval and an optional monthly cap. A Claude Code key can't be borrowed.
+_Avoid_: sharing, lending
