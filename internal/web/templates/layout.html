@@ -91,8 +91,8 @@
 
 {{define "snapform"}}
 <form method="post" action="/b/{{.Book.ID}}/snap" class="row">
-  <label for="words" class="sr">The last few words you read</label>
-  <input id="words" name="words" type="text" value="{{.Words}}" placeholder="Type the last few words you read" autocomplete="off">
+  <label for="words" class="sr">The last 4 or more words you read</label>
+  <input id="words" name="words" type="text" value="{{.Words}}" placeholder="Last 4 or more words you read" autocomplete="off">
   <button type="submit">Snap</button>
 </form>
 {{end}}
@@ -111,7 +111,7 @@
 {{define "unmatched"}}{{template "head" .}}
 <h1>Couldn't find this page</h1>
 {{if .HasPos}}<p class="where">Still: {{.Where}}</p>{{end}}
-<p>Type four or more words just as they’re printed, or pick a chapter instead.</p>
+<p>Type 4 or more words just as they’re printed, or pick a chapter instead.</p>
 {{template "snapform" .}}
 {{template "picker" .}}
 {{template "foot" .}}{{end}}

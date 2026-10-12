@@ -88,10 +88,10 @@ docker exec -it -e ANTHROPIC_API_KEY=... <container> gmesh ingest /books/book.ep
 ```
 
 Open it on your phone and use "Add to Home Screen". Tap "I finished ..."
-at the end of each chapter. Partway through one, type the last few words
-you read and tap "Snap" to move to that sentence. Titles of chapters you
-haven't reached stay hidden, and anything you haven't met yet returns the
-same "Nothing here yet" as something that doesn't exist.
+at the end of each chapter. Partway through one, type the last 4 or more
+words you read and tap "Snap" to move to that sentence. Titles of chapters
+you haven't reached stay hidden, and anything you haven't met yet returns
+the same "Nothing here yet" as something that doesn't exist.
 
 There are no accounts. Run it for yourself on a private network, or behind
 an authenticating proxy with `--trust-header Remote-User` so each reader

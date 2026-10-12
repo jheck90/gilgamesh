@@ -194,14 +194,14 @@ func TestSnapFieldOnBookPage(t *testing.T) {
 	srv, _ := setup(t, "")
 	hasField := func(body string) bool {
 		return strings.Contains(body, `action="/b/1/snap"`) && strings.Contains(body, `name="words"`) &&
-			strings.Contains(body, "the last few words you read")
+			strings.Contains(body, "4 or more words you read")
 	}
 	if _, body := send(t, srv, "", "/b/1", nil); !hasField(body) {
-		t.Errorf("no position: no field to type the last few words:\n%s", body)
+		t.Errorf("no position: no field to type the last 4 or more words:\n%s", body)
 	}
 	send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"3"}})
 	if _, body := send(t, srv, "", "/b/1", nil); !hasField(body) {
-		t.Errorf("with a position: no field to type the last few words:\n%s", body)
+		t.Errorf("with a position: no field to type the last 4 or more words:\n%s", body)
 	}
 }
 
