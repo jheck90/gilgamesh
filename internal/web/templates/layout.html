@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/register.js" defer></script>
 <script src="/static/snap.js" defer></script>
+<script src="/static/library.js" defer></script>
 </head>
 <body>
 <header class="top">
@@ -223,8 +224,8 @@
   <input type="search" name="q" value="{{.Query}}" placeholder="Title, author, series or file" aria-label="Search the library">
 </form>
 <p class="meta">{{.Total}} {{plural .Total "file" "files"}}{{if .Query}} matching “{{.Query}}” · <a href="/library">clear</a>{{end}}</p>
-{{range .Shelves}}
-<section class="shelf">
+{{range .Groups}}
+<section class="series">
   {{with .Series}}<h2>{{.}}</h2>{{else}}<h2>Not in a series</h2>{{end}}
   <ul class="files">
   {{range .Files}}
@@ -269,7 +270,7 @@
   {{end}}
   </ol>
   <p class="meta">{{.Book.Words}} words, {{.Book.Calls}} model {{plural .Book.Calls "call" "calls"}}</p>
-  {{if $.Priced}}
+  {{if $.HasModel}}
   <h2>Price</h2>
   {{if $.Assumed}}<p class="meta">No key to price with, so this assumes an Anthropic key.</p>{{end}}
   <p>Adding it on {{$.Ingest.Model}}: {{$.Ingest.TokensText}}, <strong>{{$.Ingest.PriceText}}</strong>.{{if not $.Ingest.Runs}} <span class="meta">The output is a guess until a book has been added on this model.</span>{{end}}</p>
@@ -280,7 +281,7 @@
   {{end}}
   {{with .Problem}}<p class="problem">{{.}}</p>{{end}}
   {{with $.KeyProblem}}<p class="problem">{{.}}</p>{{end}}
-  <div class="row"><button type="submit">Update price</button></div>
+  <div class="row"><button type="submit" data-update>Update price</button></div>
   <button class="primary" type="submit" formmethod="post" formaction="/library/add"{{if $.Blocked}} disabled{{end}}>Add this book</button>
   <p class="meta">Adding it is the only step that spends anything.</p>
 </form>

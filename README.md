@@ -252,15 +252,18 @@ valid EPUB, or no readable text, e.g. DRM), or still arriving (changed in the
 last minute, so a downloader may still be writing it). Each file is read once
 and remembered by its path, size and modification time; only new or changed
 files are read again. Nothing outside the folder is listed or opened: paths
-with `..` and symlinks that lead out are refused.
+with `..` and symlinks that lead out are refused. Symlinked files inside it
+are listed; symlinked folders aren't followed.
 
 Picking a file shows its chapters with word counts and the price range, as
-`ingest --dry-run` does. Tick chapters to leave out and press "Update
-price"; change the series name or number if the EPUB has them wrong. A clash
+`ingest --dry-run` does. Tick chapters to leave out and the price updates;
+change the series name or number if the EPUB has them wrong and press
+"Update price". A clash
 with the reading order shows before anything is spent. "Then tidy its
 notes" (on by default) runs `edit` afterwards, with its own estimate;
-leaving it ticked agrees to that too. The model and effort are the key's
-defaults (`--chunk-words` and `--model` stay CLI-only). "Add this book" is
+leaving it ticked agrees to that too. It runs on the key's model at
+`medium` effort, as `ingest` does by default (`--model`, `--effort` and
+`--chunk-words` stay CLI-only). "Add this book" is
 the only step that spends: it puts the book in the queue above.
 
 Any reader can browse the library and see prices. Without a working key

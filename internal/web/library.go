@@ -4,11 +4,14 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jheck90/gilgamesh/internal/adding"
 	"github.com/jheck90/gilgamesh/internal/epub"
@@ -20,8 +23,8 @@ import (
 	"github.com/jheck90/gilgamesh/internal/text"
 )
 
-// shelved is one file on the library page.
-type shelved struct {
+// listing is one file on the library page.
+type listing struct {
 	Path   string
 	Title  string
 	Author string
@@ -30,11 +33,15 @@ type shelved struct {
 	Reason string // why it can't be, if it can't
 	BookID int64  // the book it already is, if it's added
 	Queued bool   // it's being added
+	// Later is set when the only problem is a later book in its series,
+	// which choosing another series or number on the preview can fix.
+	Later bool
 }
 
-type shelf struct {
+// seriesGroup is the files in one series, in order.
+type seriesGroup struct {
 	Series string // "" for books in no series
-	Files  []shelved
+	Files  []listing
 }
 
 // added is what's already in the instance, to tell which library files
@@ -77,22 +84,15 @@ func (a added) later(series string, index float64) (store.Book, bool) {
 	return store.Book{}, false
 }
 
-// seriesOf is the series and number a file would be added as by default,
-// as adding.SeriesOf picks them.
+// seriesOf is the series and number a file would be added as by default.
 func seriesOf(f library.File) (string, float64) {
-	name, index := f.Series, f.SeriesIndex
-	if name == "" {
-		name = f.Title
-	}
-	if index == 0 {
-		index = 1
-	}
-	return name, index
+	return adding.SeriesOf(&epub.Book{Title: f.Title, Series: f.Series, SeriesIndex: f.SeriesIndex}, "", 0)
 }
 
-// why says why f can't be added, if it can't.
-func (a added) why(f library.File) shelved {
-	sh := shelved{Path: f.Path, Title: f.Title, Author: f.Author}
+// listing is how f shows on the library page, with why it can't be added
+// if it can't.
+func (a added) listing(f library.File) listing {
+	sh := listing{Path: f.Path, Title: f.Title, Author: f.Author}
 	if sh.Title == "" {
 		sh.Title = f.Path[strings.LastIndex(f.Path, "/")+1:]
 	}
@@ -111,7 +111,7 @@ func (a added) why(f library.File) shelved {
 		sh.Reason, sh.Queued = "being added", true
 	default:
 		if _, ok := a.later(seriesOf(f)); ok {
-			sh.Reason = laterReason
+			sh.Reason, sh.Later = "a later book in this series is already added", true
 		}
 	}
 	return sh
@@ -138,14 +138,14 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 	type entry struct {
 		series string
 		index  float64
-		sh     shelved
+		sh     listing
 	}
 	var es []entry
 	for _, f := range files {
 		if q != "" && !holds(q, f.Title, f.Author, f.Series, f.Path) {
 			continue
 		}
-		sh := a.why(f)
+		sh := a.listing(f)
 		if sh.Reason == "" {
 			sh.Pick = "/library/book?path=" + url.QueryEscape(f.Path)
 		}
@@ -162,14 +162,14 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request) {
 		return cmp.Or(cmp.Compare(strings.ToLower(x.series), strings.ToLower(y.series)), cmp.Compare(x.index, y.index),
 			cmp.Compare(strings.ToLower(x.sh.Title), strings.ToLower(y.sh.Title)), cmp.Compare(x.sh.Path, y.sh.Path))
 	})
-	var shelves []shelf
+	var groups []seriesGroup
 	for _, e := range es {
-		if len(shelves) == 0 || shelves[len(shelves)-1].Series != e.series {
-			shelves = append(shelves, shelf{Series: e.series})
+		if len(groups) == 0 || groups[len(groups)-1].Series != e.series {
+			groups = append(groups, seriesGroup{Series: e.series})
 		}
-		shelves[len(shelves)-1].Files = append(shelves[len(shelves)-1].Files, e.sh)
+		groups[len(groups)-1].Files = append(groups[len(groups)-1].Files, e.sh)
 	}
-	s.render(w, "library", map[string]any{"Title": "Add a book", "Shelves": shelves, "Query": q, "Total": len(es)})
+	s.render(w, "library", map[string]any{"Title": "Add a book", "Groups": groups, "Query": q, "Total": len(es)})
 }
 
 // holds reports whether any of fields holds q, ignoring case and accents.
@@ -183,8 +183,8 @@ func holds(q string, fields ...string) bool {
 	return false
 }
 
-// The effort and passage size a book added from the library uses: the
-// same defaults as `gmesh ingest`. Only the CLI can change them.
+// The effort a book added from the library uses: `gmesh ingest`'s default.
+// Only the CLI can change it, and the passage size.
 const libraryEffort = "medium"
 
 // section is one row of a preview's chapter list.
@@ -222,7 +222,7 @@ func (s *Server) plan(r *http.Request, a added) (plan, error) {
 		return plan{}, err
 	}
 	p := plan{File: f, Title: f.Title, Author: f.Author}
-	if sh := a.why(f); sh.Reason != "" && sh.Reason != laterReason {
+	if sh := a.listing(f); sh.Reason != "" && !sh.Later {
 		p.Title, p.Problem = sh.Title, "This file can't be added: "+sh.Reason+"."
 		return p, nil
 	}
@@ -237,8 +237,11 @@ func (s *Server) plan(r *http.Request, a added) (plan, error) {
 			skip[n] = true
 		}
 	}
-	index, _ := strconv.ParseFloat(strings.TrimSpace(r.FormValue("index")), 64)
-	p.Series, p.Index = adding.SeriesOf(eb, strings.TrimSpace(r.FormValue("series")), max(index, 0))
+	index, err := strconv.ParseFloat(strings.TrimSpace(r.FormValue("index")), 64)
+	if err != nil || math.IsNaN(index) || math.IsInf(index, 0) || index < 0 {
+		index = 0 // the EPUB's
+	}
+	p.Series, p.Index = adding.SeriesOf(eb, strings.TrimSpace(r.FormValue("series")), index)
 	p.Edit = first || r.FormValue("edit") == "1"
 	chapters, sentences, secs := adding.Prepare(eb, skip)
 	var skipped []string
@@ -268,9 +271,8 @@ func (s *Server) plan(r *http.Request, a added) (plan, error) {
 	return p, nil
 }
 
-const laterReason = "a later book in this series is already added"
-
-// keyProblem says why user can't add books, and what fixes it, or is "".
+// keyProblem says why a reader can't add books, and what fixes it, or is
+// "".
 func keyProblem(err error) string {
 	if err == nil {
 		return ""
@@ -279,22 +281,27 @@ func keyProblem(err error) string {
 	if !strings.Contains(msg, "gmesh key") {
 		msg += ". Add your own key with `gmesh key set`."
 	}
-	return strings.ToUpper(msg[:1]) + msg[1:]
+	first, n := utf8.DecodeRuneInString(msg)
+	return string(unicode.ToUpper(first)) + msg[n:]
+}
+
+// planFor is the reader and what adding the file they picked would do.
+func (s *Server) planFor(r *http.Request) (store.User, plan, error) {
+	user, err := s.user(r)
+	if err != nil {
+		return user, plan{}, err
+	}
+	a, err := s.added(r)
+	if err != nil {
+		return user, plan{}, err
+	}
+	p, err := s.plan(r, a)
+	return user, p, err
 }
 
 func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	user, err := s.user(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	a, err := s.added(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	p, err := s.plan(r, a)
+	user, p, err := s.planFor(r)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -315,7 +322,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data["Ingest"], data["EditPrice"], data["Priced"] = ingest, edit, ingest.Model.Name != ""
+	data["Ingest"], data["EditPrice"], data["HasModel"] = ingest, edit, ingest.Model.Name != ""
 	data["KeyProblem"], data["Assumed"] = keyProblem(keyErr), keyErr != nil
 	data["Blocked"] = p.Problem != "" || keyErr != nil
 	s.render(w, "preview", data)
@@ -325,17 +332,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request) {
 // on the library page that spends anything.
 func (s *Server) add(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	user, err := s.user(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	a, err := s.added(r)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	p, err := s.plan(r, a)
+	user, p, err := s.planFor(r)
 	if err != nil {
 		s.fail(w, err)
 		return

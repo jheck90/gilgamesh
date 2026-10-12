@@ -46,6 +46,8 @@ func (s *Store) LibraryFiles(ctx context.Context) (map[string]LibraryFile, error
 	return out, rows.Err()
 }
 
+// PutLibraryFile remembers what f holds, replacing what was cached for
+// its path.
 func (s *Store) PutLibraryFile(ctx context.Context, f LibraryFile) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO library_files (path, size, mod_time, sha256, title, author, series, series_index, unreadable)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -55,6 +57,7 @@ func (s *Store) PutLibraryFile(ctx context.Context, f LibraryFile) error {
 	return err
 }
 
+// DeleteLibraryFile forgets a file that's no longer in the library.
 func (s *Store) DeleteLibraryFile(ctx context.Context, path string) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM library_files WHERE path = ?", path)
 	return err

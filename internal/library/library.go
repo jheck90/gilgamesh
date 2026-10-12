@@ -18,6 +18,7 @@ import (
 	"github.com/jheck90/gilgamesh/internal/store"
 )
 
+// Library is the folder of EPUBs at Root.
 type Library struct {
 	Root  string
 	Store *store.Store // caches what each file holds
@@ -53,6 +54,9 @@ func (l *Library) Scan(ctx context.Context) ([]File, error) {
 	var out []File
 	err = filepath.WalkDir(l.Root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			if path != l.Root && d != nil && d.IsDir() {
+				return fs.SkipDir // a folder it can't open hides only what's in it
+			}
 			return err
 		}
 		if d.IsDir() || !isEPUB(path) {
@@ -122,8 +126,12 @@ func (l *Library) file(ctx context.Context, rel, path string, cached map[string]
 		if err := read(path, &c); err != nil {
 			return File{}, err
 		}
-		if err := l.Store.PutLibraryFile(ctx, c); err != nil {
-			return File{}, err
+		// One that couldn't be opened isn't remembered: making it readable
+		// doesn't change its modification time.
+		if c.SHA256 != "" {
+			if err := l.Store.PutLibraryFile(ctx, c); err != nil {
+				return File{}, err
+			}
 		}
 	}
 	return File{Path: rel, Abs: abs, SHA256: c.SHA256, Title: c.Title, Author: c.Author, Series: c.Series, SeriesIndex: c.SeriesIndex, Unreadable: c.Unreadable}, nil
@@ -164,7 +172,8 @@ func isEPUB(path string) bool { return strings.EqualFold(filepath.Ext(path), ".e
 func read(path string, f *store.LibraryFile) error {
 	sha, err := adding.FileSHA(path)
 	if err != nil {
-		return err
+		f.Unreadable = "can't read this file"
+		return nil
 	}
 	f.SHA256 = sha
 	b, err := epub.Open(path)

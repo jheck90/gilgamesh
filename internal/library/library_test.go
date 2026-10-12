@@ -185,3 +185,32 @@ func TestPathsStayInsideTheRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestAFileOrFolderThatCantBeOpenedDoesntHideTheRest(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can open anything")
+	}
+	l := newLibrary(t)
+	write(t, l, "fine.epub", epubtest.Book{Title: "Fine"})
+	locked := write(t, l, "locked.epub", epubtest.Book{Title: "Locked"})
+	write(t, l, "Private/hidden.epub", epubtest.Book{Title: "Hidden"})
+	for path, mode := range map[string]os.FileMode{locked: 0, filepath.Join(l.Root, "Private"): 0} {
+		if err := os.Chmod(path, mode); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(path, 0o755) })
+	}
+
+	got := scan(t, l)
+	if got["fine.epub"].Title != "Fine" {
+		t.Errorf("fine.epub: %+v", got["fine.epub"])
+	}
+	if got["locked.epub"].Unreadable != "can't read this file" {
+		t.Errorf("a file that can't be opened: %+v, want it listed as unreadable", got["locked.epub"])
+	}
+
+	os.Chmod(locked, 0o644)
+	if f := scan(t, l)["locked.epub"]; f.Title != "Locked" {
+		t.Errorf("once it can be opened: %+v", f)
+	}
+}

@@ -24,12 +24,12 @@ import (
 var settled = time.Now().Add(-time.Hour)
 
 type libraryFixture struct {
-	st     *store.Store
-	q      *adding.Queue
-	lib    *library.Library
-	saga   int64 // The Crawl, Saga #1, from setup
-	send   func(reader, path string, form url.Values) (int, string)
-	shelve func(rel string, b epubtest.Book) string
+	st   *store.Store
+	q    *adding.Queue
+	lib  *library.Library
+	saga int64 // The Crawl, Saga #1, from setup
+	send func(reader, path string, form url.Values) (int, string)
+	put  func(rel string, b epubtest.Book) string
 }
 
 // withLibrary serves the books setup adds, a library to add more from, and
@@ -50,7 +50,7 @@ func withLibrary(t *testing.T) *libraryFixture {
 	})
 	s.saga = bid
 	s.send = func(reader, path string, form url.Values) (int, string) { return send(t, srv, reader, path, form) }
-	s.shelve = func(rel string, b epubtest.Book) string {
+	s.put = func(rel string, b epubtest.Book) string {
 		t.Helper()
 		path := filepath.Join(s.lib.Root, rel)
 		os.MkdirAll(filepath.Dir(path), 0o755)
@@ -81,14 +81,14 @@ func pick(rel string) string { return "/library/book?path=" + url.QueryEscape(re
 func TestLibraryListing(t *testing.T) {
 	s := withLibrary(t)
 	ctx := context.Background()
-	s.shelve("Carl/2.epub", epubtest.Book{Title: "Carl's Doomsday Scenario", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "2"})
-	s.shelve("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "1"})
-	s.shelve("a-alone.epub", epubtest.Book{Title: "Alone", Author: "Someone"})
-	added := s.shelve("added.epub", epubtest.Book{Title: "Added Already", Author: "Someone"})
-	s.shelve("saga.epub", epubtest.Book{Title: "Between", Series: "Saga", SeriesIndex: "1.5"})
+	s.put("Carl/2.epub", epubtest.Book{Title: "Carl's Doomsday Scenario", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "2"})
+	s.put("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "1"})
+	s.put("a-alone.epub", epubtest.Book{Title: "Alone", Author: "Someone"})
+	added := s.put("added.epub", epubtest.Book{Title: "Added Already", Author: "Someone"})
+	s.put("saga.epub", epubtest.Book{Title: "Between", Series: "Saga", SeriesIndex: "1.5"})
 	os.WriteFile(filepath.Join(s.lib.Root, "broken.epub"), []byte("not a zip"), 0o644)
 	os.Chtimes(filepath.Join(s.lib.Root, "broken.epub"), settled, settled)
-	fresh := s.shelve("fresh.epub", epubtest.Book{Title: "Fresh"})
+	fresh := s.put("fresh.epub", epubtest.Book{Title: "Fresh"})
 	os.Chtimes(fresh, time.Now(), time.Now())
 
 	sha, _ := adding.FileSHA(added)
@@ -150,7 +150,7 @@ var inputTokens = regexp.MustCompile(`input (\S+) tokens`)
 
 func TestLibraryPreview(t *testing.T) {
 	s := withLibrary(t)
-	s.shelve("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "1",
+	s.put("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Author: "Matt Dinniman", Series: "Dungeon Crawler Carl", SeriesIndex: "1",
 		Chapters: []epubtest.Chapter{long("Chapter One", 3000), long("Chapter Two", 9000), long("Chapter Three", 3000)}})
 
 	_, page := s.send("default", pick("Carl/1.epub"), nil)
@@ -197,7 +197,7 @@ func confirmable(page string) bool {
 func TestConfirmQueuesTheBook(t *testing.T) {
 	s := withLibrary(t)
 	ctx := context.Background()
-	path := s.shelve("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Series: "Dungeon Crawler Carl", SeriesIndex: "1",
+	path := s.put("Carl/1.epub", epubtest.Book{Title: "Dungeon Crawler Carl", Series: "Dungeon Crawler Carl", SeriesIndex: "1",
 		Chapters: []epubtest.Chapter{long("Chapter One", 300), long("Chapter Two", 300), long("Chapter Three", 300)}})
 	sha, _ := adding.FileSHA(path)
 	form := url.Values{"path": {"Carl/1.epub"}, "sha": {sha}, "set": {"1"}, "skip": {"1", "3"}, "series": {"DCC"}, "index": {"1"}}
@@ -234,7 +234,7 @@ func TestConfirmQueuesTheBook(t *testing.T) {
 func TestReadersWithoutAWorkingKeyCanLookButNotAdd(t *testing.T) {
 	s := withLibrary(t)
 	ctx := context.Background()
-	path := s.shelve("book.epub", epubtest.Book{Title: "A Book"})
+	path := s.put("book.epub", epubtest.Book{Title: "A Book"})
 	sha, _ := adding.FileSHA(path)
 	form := url.Values{"path": {"book.epub"}, "sha": {sha}, "set": {"1"}}
 	s.send("alice", "/", nil)
@@ -262,6 +262,8 @@ func TestReadersWithoutAWorkingKeyCanLookButNotAdd(t *testing.T) {
 	check("no key", "No key", "gmesh key set", "gmesh key request")
 	s.st.RequestGrant(ctx, alice.ID, "")
 	check("request pending", "waiting for the admin", "gmesh key set")
+	s.st.DecideGrant(ctx, alice.ID, store.GrantDenied, 0, admin.ID)
+	check("request denied", "denied", "gmesh key set", "gmesh key request")
 	s.st.DecideGrant(ctx, alice.ID, store.GrantApproved, 100, admin.ID)
 	b, _, _ := s.st.BookByID(ctx, s.saga)
 	s.st.ApplyChunk(ctx, store.ChunkWrite{BookID: b.ID, SeriesID: b.SeriesID, NextChunk: 1,
