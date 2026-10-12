@@ -1,14 +1,20 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jheck90/gilgamesh/internal/store"
 )
@@ -37,7 +43,7 @@ func TestChapterLabels(t *testing.T) {
 	}
 }
 
-func setup(t *testing.T, trust string) (*httptest.Server, int64) {
+func setup(t *testing.T, trust string, opts ...func(*Server)) (*httptest.Server, int64) {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
@@ -82,9 +88,33 @@ func setup(t *testing.T, trust string) (*httptest.Server, int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := httptest.NewServer((&Server{Store: st, TrustHeader: trust, DefaultUser: "default"}).Handler())
+	return serve(t, st, trust, opts...), bid
+}
+
+// serve starts the web app over st, with fake photos.
+func serve(t *testing.T, st *store.Store, trust string, opts ...func(*Server)) *httptest.Server {
+	t.Helper()
+	s := &Server{Store: st, TrustHeader: trust, DefaultUser: "default", Photos: fakePhotos{}}
+	for _, o := range opts {
+		o(s)
+	}
+	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
-	return srv, bid
+	return srv
+}
+
+// pngHeader starts every fake photo, so the server takes it for an image.
+const pngHeader = "\x89PNG\r\n\x1a\n"
+
+// photo is a fake photo of a page showing text.
+func photo(text string) []byte { return []byte(pngHeader + text) }
+
+// fakePhotos stands in for Tesseract: it reads back the text a fake photo
+// shows.
+type fakePhotos struct{}
+
+func (fakePhotos) ReadPhoto(ctx context.Context, photo []byte) (string, error) {
+	return strings.TrimPrefix(string(photo), pngHeader), nil
 }
 
 func get(t *testing.T, c *http.Client, u string) (int, string) {
@@ -196,13 +226,25 @@ func TestSnapFieldOnBookPage(t *testing.T) {
 		return strings.Contains(body, `action="/b/1/snap"`) && strings.Contains(body, `name="words"`) &&
 			strings.Contains(body, "4 or more words you read")
 	}
-	if _, body := send(t, srv, "", "/b/1", nil); !hasField(body) {
-		t.Errorf("no position: no field to type the last 4 or more words:\n%s", body)
+	for _, pos := range []string{"no position", "with a position"} {
+		if pos == "with a position" {
+			send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"3"}})
+		}
+		_, body := send(t, srv, "", "/b/1", nil)
+		if !hasField(body) {
+			t.Errorf("%s: no field to type the last 4 or more words:\n%s", pos, body)
+		}
+		if !hasCamera(body) {
+			t.Errorf("%s: no photo input that opens the rear camera:\n%s", pos, body)
+		}
 	}
-	send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"3"}})
-	if _, body := send(t, srv, "", "/b/1", nil); !hasField(body) {
-		t.Errorf("with a position: no field to type the last 4 or more words:\n%s", body)
-	}
+}
+
+// hasCamera reports whether a page has a photo input that posts a snap
+// and opens the rear camera on a phone.
+func hasCamera(body string) bool {
+	return strings.Contains(body, `enctype="multipart/form-data"`) &&
+		regexp.MustCompile(`<input[^>]* name="photo" type="file" accept="image/\*" capture="environment"`).MatchString(body)
 }
 
 func TestSnapByTypedWords(t *testing.T) {
@@ -289,5 +331,231 @@ func TestSnapMovesOnlyThatReader(t *testing.T) {
 	}
 	if _, body := send(t, srv, "bob", "/b/1", nil); !strings.Contains(body, `<p class="where">Finished I The Sea-dog</p>`) {
 		t.Errorf("alice's snap moved bob:\n%s", body)
+	}
+}
+
+// snapPhoto uploads a photo to path the way the book page's photo input
+// does, as the default reader, and returns the page it lands on.
+func snapPhoto(t *testing.T, srv *httptest.Server, path string, photo []byte) (int, string) {
+	t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("photo", "page.jpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw.Write(photo)
+	mw.Close()
+	res, err := srv.Client().Post(srv.URL+path, mw.FormDataContentType(), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b)
+}
+
+func TestSnapByPhoto(t *testing.T) {
+	// Sentences 2 and 3 reveal nothing. Carl is met in sentence 0, Day 1
+	// is marked in 1, and Mordecai is met in 4.
+	cases := []struct {
+		name, page, where    string
+		metCarl, metMordecai bool
+	}{
+		{"nothing revealed: to the end of the page",
+			"“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+		{"a sentence cut off at the bottom belongs to the next page",
+			"“The tide always turns,” his mother used to say.\nA hooded man watched",
+			"Finished I The Sea-dog", true, false},
+		{"a reveal on the page: to the sentence before the page",
+			"A hooded man watched from the dunes. “He’s Mordecai,” someone whispered.",
+			"Finished I The Sea-dog", true, false},
+		{"a reveal on the book's first page: to before the book starts",
+			"Carl woke to the sound of gulls. It was Day 1.",
+			"Partway through I The Sea-dog", false, false},
+		{"a reveal only in a cut-off sentence: to the end of the page",
+			"“The tide always turns,” his mother used to say. A hooded man watched from the dunes.\n“He’s Mordecai,”",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+		{"a running head and page number",
+			"THE CRAWL                17\n“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+		{"a word hyphenated across a line end",
+			"“The tide always turns,” his mother used to say.\nA hooded man watched from the du-\nnes.",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+		{"OCR typos, down to the page's last words",
+			"“Tbe tide always turns,’ his rnother used to say.\nA hooded man watched frorn the dunes.",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+		{"two facing pages",
+			"16 THE CRAWL\n“The tide always turns,” his\nmother used to say.\n\nII 17\nA hooded man watched from the dunes.",
+			"Partway through II The Hooded Man Is Mordecai", true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv, _ := setup(t, "")
+			code, body := snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			if code != 200 || !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("%d, want %q\n%s", code, c.where, body)
+			}
+			if met := strings.Contains(body, `href="/b/1/e/1"`); met != c.metCarl {
+				t.Errorf("Carl listed = %v, want %v\n%s", met, c.metCarl, body)
+			}
+			if met := strings.Contains(body, `href="/b/1/e/2"`); met != c.metMordecai {
+				t.Errorf("Mordecai listed = %v, want %v\n%s", met, c.metMordecai, body)
+			}
+			if strings.Contains(body, "Chieftain") {
+				t.Errorf("a later chapter title leaked:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestPhotoSnapStopsBeforeEachKindOfReveal(t *testing.T) {
+	// The page snapped is chapter 2, sentences 1 and 2. Ada is met in
+	// sentence 0, and each case reveals one thing in sentence 2.
+	ada := func(rs ...store.AliasRec) store.NewEntity {
+		return store.NewEntity{Name: "Ada", Type: "character", FirstOrd: 0, Aliases: rs}
+	}
+	cases := []struct {
+		name  string
+		chunk store.ChunkWrite
+		title bool // show Ada by her alias
+		where string
+	}{
+		{"nothing revealed", store.ChunkWrite{New: []store.NewEntity{ada()}}, false, "Finished Chapter 2"},
+		{"a fact", store.ChunkWrite{New: []store.NewEntity{{Name: "Ada", Type: "character", FirstOrd: 0,
+			Facts: []store.FactRec{{Text: "Ada hears the ferry.", Ord: 2, Evidence: []int{2}}}}}}, false, "Finished Chapter 1"},
+		{"an alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "the keeper", Ord: 2})}}, false, "Finished Chapter 1"},
+		{"a title alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "Keeper Ada", Ord: 2})}}, true, "Finished Chapter 1"},
+		{"a new entity", store.ChunkWrite{New: []store.NewEntity{ada(), {Name: "the ferry", Type: "thing", FirstOrd: 2}}}, false, "Finished Chapter 1"},
+		{"a time marker", store.ChunkWrite{New: []store.NewEntity{ada()}, Markers: []store.MarkerRec{{Label: "Night 1", Ord: 2}}}, false, "Finished Chapter 1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			sid, _ := st.EnsureSeries(ctx, "Lighthouse")
+			bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "The Lamp", SHA256: "l", SourcePath: "l"},
+				[]store.Chapter{
+					{Idx: 1, Title: "Chapter 1", FirstOrd: 0, LastOrd: 0},
+					{Idx: 2, Title: "Chapter 2", FirstOrd: 1, LastOrd: 2},
+					{Idx: 3, Title: "Chapter 3", FirstOrd: 3, LastOrd: 3},
+				},
+				[]store.Sentence{
+					{Ord: 0, ChapterIdx: 1, Text: "Ada climbed the lighthouse stairs at dusk."},
+					{Ord: 1, ChapterIdx: 2, Text: "The lamp had to be lit before the ships came in."},
+					{Ord: 2, ChapterIdx: 2, Text: "Below the cliff the ferry sounded its horn twice."},
+					{Ord: 3, ChapterIdx: 3, Text: "Nobody answered the horn that night."},
+				}, 1, 100)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.chunk.BookID, c.chunk.SeriesID, c.chunk.NextChunk = bid, sid, 1
+			if _, err := st.ApplyChunk(ctx, c.chunk); err != nil {
+				t.Fatal(err)
+			}
+			if c.title {
+				b, _, _ := st.BookByID(ctx, bid)
+				notes, err := st.BookNotes(ctx, b)
+				if err != nil {
+					t.Fatal(err)
+				}
+				e := notes.Entities[0]
+				if _, err := st.ApplyEdit(ctx, store.Edit{BookID: bid, SeriesID: sid,
+					Titles: []store.Title{{Entity: e.ID, Alias: e.Aliases[0].ID}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			srv := serve(t, st, "")
+			_, body := snapPhoto(t, srv, "/b/1/snap", photo(
+				"The lamp had to be lit before the ships came in.\nBelow the cliff the ferry sounded its horn twice."))
+			if !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("want %q\n%s", c.where, body)
+			}
+		})
+	}
+}
+
+// slowPhotos takes longer to read a photo than the server waits.
+type slowPhotos struct{}
+
+func (slowPhotos) ReadPhoto(ctx context.Context, photo []byte) (string, error) {
+	<-ctx.Done()
+	return "", ctx.Err()
+}
+
+// brokenPhotos fails like a server without the tesseract program.
+type brokenPhotos struct{}
+
+func (brokenPhotos) ReadPhoto(ctx context.Context, photo []byte) (string, error) {
+	return "", &exec.Error{Name: "tesseract", Err: exec.ErrNotFound}
+}
+
+func TestPhotoSnapThatFails(t *testing.T) {
+	page := photo("“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.")
+	cases := []struct {
+		name    string
+		server  func(*Server)
+		photo   []byte
+		code    int
+		problem string
+	}{
+		{"unreadable text", nil, photo("~ |l1 ,, .\n\nrn ii Tr"), 200, "Couldn't find this page"},
+		{"a file that isn't an image", nil, []byte("Dear diary, today the tide turned."), 415, "isn’t a photo"},
+		{"a photo over the size cap", func(s *Server) { s.MaxPhoto = 64 }, append(page, bytes.Repeat([]byte(" "), 64)...), 413, "too big"},
+		{"a photo that takes too long to read", func(s *Server) { s.Photos, s.PhotoTimeout = slowPhotos{}, time.Millisecond }, page, 503, "took too long"},
+		{"no tesseract program", func(s *Server) { s.Photos = brokenPhotos{} }, page, 503, "Couldn’t read that photo"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var opts []func(*Server)
+			if c.server != nil {
+				opts = append(opts, c.server)
+			}
+			srv, _ := setup(t, "", opts...)
+			send(t, srv, "", "/b/1/pos", url.Values{"chapter": {"3"}})
+			code, body := snapPhoto(t, srv, "/b/1/snap", c.photo)
+			if code != c.code || !strings.Contains(body, c.problem) {
+				t.Errorf("got %d, want %d and %q:\n%s", code, c.code, c.problem, body)
+			}
+			if !strings.Contains(body, `action="/b/1/snap"`) || !strings.Contains(body, `name="words"`) {
+				t.Errorf("no field to type the last words read instead:\n%s", body)
+			}
+			if !hasCamera(body) || !strings.Contains(body, `action="/b/1/pos"`) {
+				t.Errorf("no way to retake the photo or pick a chapter:\n%s", body)
+			}
+			if _, body := send(t, srv, "", "/b/1", nil); !strings.Contains(body, `<p class="where">Finished I The Sea-dog</p>`) {
+				t.Errorf("the position moved:\n%s", body)
+			}
+			// Typed words still work.
+			if _, body := send(t, srv, "", "/b/1/snap", url.Values{"words": {"a hooded man watched"}}); !strings.Contains(body, `<p class="where">Partway through II The Hooded Man Is Mordecai</p>`) {
+				t.Errorf("typed words after a failed photo:\n%s", body)
+			}
+		})
+	}
+}
+
+func TestPhotoSnapsLogNoText(t *testing.T) {
+	var logged bytes.Buffer
+	out := log.Writer()
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(out) })
+
+	srv, _ := setup(t, "")
+	broken, _ := setup(t, "", func(s *Server) { s.Photos = brokenPhotos{} })
+	snapPhoto(t, srv, "/b/1/snap", photo("“The tide always turns,” his mother used to say."))
+	snapPhoto(t, srv, "/b/1/snap", photo("A postcard from Zanzibar, wish you were here."))
+	snapPhoto(t, broken, "/b/1/snap", photo("A postcard from Zanzibar, wish you were here."))
+	if !strings.Contains(logged.String(), "tesseract") {
+		t.Errorf("a broken photo reader isn't logged for the operator:\n%s", &logged)
+	}
+	for _, w := range []string{"tide", "mother", "postcard", "Zanzibar"} {
+		if strings.Contains(logged.String(), w) {
+			t.Errorf("text from a photo was logged:\n%s", &logged)
+		}
 	}
 }

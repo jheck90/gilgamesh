@@ -73,13 +73,14 @@ blockquote {
 }
 form { margin: 0; }
 .row { display: flex; gap: 8px; margin: 8px 0; }
-select, input, button {
+select, input, button, label.button {
   font: 16px system-ui, sans-serif; color: var(--text);
   background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
   min-height: 44px;
 }
-select, input { flex: 1; min-width: 0; }
-button { cursor: pointer; }
+select, input, label.button { flex: 1; min-width: 0; }
+button, label.button { cursor: pointer; }
+label.button { display: flex; align-items: center; justify-content: center; }
 button.primary {
   width: 100%; margin: 8px 0 12px; background: var(--accent); color: var(--accent-text);
   border-color: var(--accent); font-weight: 600;

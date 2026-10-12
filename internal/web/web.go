@@ -4,10 +4,12 @@
 package web
 
 import (
+	"cmp"
 	"context"
 	"embed"
 	"errors"
 	"html/template"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -15,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jheck90/gilgamesh/internal/store"
 	"github.com/jheck90/gilgamesh/internal/text"
@@ -33,8 +36,20 @@ type Server struct {
 	// Only set it when the app can't be reached except through the proxy.
 	TrustHeader string
 	DefaultUser string
+	// Photos reads the text off a snapped photo of a page.
+	Photos PhotoReader
+	// MaxPhoto caps a photo's size in bytes, and PhotoTimeout how long
+	// reading one may take. Zero means 20 MB and 30 seconds.
+	MaxPhoto     int64
+	PhotoTimeout time.Duration
 
 	tmpl *template.Template
+}
+
+// PhotoReader reads the text off a photo of a page. The photo and its text
+// are the reader's: neither is ever stored or logged.
+type PhotoReader interface {
+	ReadPhoto(ctx context.Context, photo []byte) (string, error)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -436,7 +451,7 @@ func (s *Server) next(w http.ResponseWriter, r *http.Request) {
 }
 
 // snap moves the position to the page in front of the reader, found from
-// the last few words they read: to the sentence the words end in.
+// a photo of it or from the last few words they read.
 func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, rd, err := s.readingFor(r)
@@ -449,28 +464,157 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	texts := make([]string, len(sents))
-	for i, se := range sents {
-		texts[i] = se.Text
+	var ord int
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		ord, err = s.snapPhoto(w, r, rd.book.ID, sents)
+	} else {
+		ord, err = snapWords(r, sents)
 	}
-	words := r.FormValue("words")
-	page, ok := text.MatchPage(words, texts)
-	if !ok {
+	var again tryAgain
+	if errors.As(err, &again) {
+		title := "Couldn't find this page"
+		if again.problem != "" {
+			title = again.problem
+		}
+		w.WriteHeader(again.code)
 		s.render(w, "unmatched", map[string]any{
-			"Title":    "Couldn't find this page",
+			"Title":    title,
+			"Problem":  again.problem,
+			"Message":  again.msg,
 			"Book":     rd.book,
 			"Where":    rd.where(),
 			"HasPos":   rd.pos != nil,
 			"Chapters": rd.options(),
-			"Words":    words,
+			"Words":    again.words,
 		})
 		return
 	}
-	if err := s.Store.SetPosition(ctx, user.ID, rd.book.ID, sents[page.Last].Ord); err != nil {
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	if err := s.Store.SetPosition(ctx, user.ID, rd.book.ID, ord); err != nil {
 		s.fail(w, err)
 		return
 	}
 	toBook(w, r, rd)
+}
+
+// tryAgain is a snap that didn't move the position. The reader sees why,
+// with the ways to try again: another photo, typed words, or the chapter
+// picker.
+type tryAgain struct {
+	code    int
+	problem string // what went wrong with a photo; empty when the page just wasn't found
+	msg     string
+	words   string // typed words to fill back in
+}
+
+func (e tryAgain) Error() string { return e.problem + " " + e.msg }
+
+// snapWords moves to the sentence the reader's typed words end in.
+func snapWords(r *http.Request, sents []store.Sentence) (int, error) {
+	words := r.FormValue("words")
+	page, ok := text.MatchPage(words, texts(sents))
+	if !ok {
+		return 0, tryAgain{code: http.StatusOK, words: words,
+			msg: "Type 4 or more words just as they’re printed, or pick a chapter instead."}
+	}
+	return sents[page.Last].Ord, nil
+}
+
+// snapPhoto moves to the end of the page in a photo: its last sentence
+// shown whole. If anything is revealed on the page, the reader may not have
+// got that far down, so it moves to just before the page instead. The
+// photo is held in memory for this request only.
+func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (int, error) {
+	photo, err := readPhoto(w, r, cmp.Or(s.MaxPhoto, 20<<20))
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), cmp.Or(s.PhotoTimeout, 30*time.Second))
+	defer cancel()
+	words, err := s.Photos.ReadPhoto(ctx, photo)
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
+	}
+	if err != nil {
+		log.Printf("web: read photo: %v", err)
+		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
+			msg: "Photo snaps aren’t working here right now. " + typeInstead}
+	}
+	page, ok := text.MatchPage(words, texts(sents))
+	if !ok {
+		return 0, tryAgain{code: http.StatusOK,
+			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}
+	}
+	end := page.Last
+	if page.Cut {
+		end--
+	}
+	before := sents[page.First].Ord - 1
+	if end < page.First {
+		return before, nil // no sentence shown whole
+	}
+	revealed, err := s.Store.RevealsBetween(r.Context(), bookID, sents[page.First].Ord, sents[end].Ord)
+	if err != nil {
+		return 0, err
+	}
+	if revealed {
+		return before, nil
+	}
+	return sents[end].Ord, nil
+}
+
+const typeInstead = "Type the last 4 or more words you read instead, or pick a chapter."
+
+// readPhoto reads the uploaded photo into memory, refusing one over max
+// bytes or that isn't an image. Reading the parts directly, rather than
+// parsing the form, keeps the photo off disk.
+func readPhoto(w http.ResponseWriter, r *http.Request, max int64) ([]byte, error) {
+	tooBig := tryAgain{code: http.StatusRequestEntityTooLarge, problem: "That photo is too big", msg: typeInstead}
+	notPhoto := tryAgain{code: http.StatusUnsupportedMediaType, problem: "That isn’t a photo",
+		msg: "Take a photo of the page you’re on, or type the last 4 or more words you read."}
+	r.Body = http.MaxBytesReader(w, r.Body, max+64<<10) // room for the form around the photo
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return nil, httpError{http.StatusBadRequest, "Bad upload."}
+	}
+	var mbe *http.MaxBytesError
+	for {
+		p, err := mr.NextPart()
+		if errors.As(err, &mbe) {
+			return nil, tooBig
+		}
+		if errors.Is(err, io.EOF) {
+			return nil, notPhoto
+		}
+		if err != nil {
+			return nil, httpError{http.StatusBadRequest, "Bad upload."}
+		}
+		if p.FormName() != "photo" {
+			continue
+		}
+		photo, err := io.ReadAll(io.LimitReader(p, max+1))
+		if errors.As(err, &mbe) || int64(len(photo)) > max {
+			return nil, tooBig
+		}
+		if err != nil {
+			return nil, httpError{http.StatusBadRequest, "Bad upload."}
+		}
+		if !strings.HasPrefix(http.DetectContentType(photo), "image/") {
+			return nil, notPhoto
+		}
+		return photo, nil
+	}
+}
+
+func texts(sents []store.Sentence) []string {
+	out := make([]string, len(sents))
+	for i, se := range sents {
+		out[i] = se.Text
+	}
+	return out
 }
 
 func (s *Server) entity(w http.ResponseWriter, r *http.Request) {

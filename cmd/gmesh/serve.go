@@ -7,8 +7,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"time"
 
+	"github.com/jheck90/gilgamesh/internal/ocr"
 	"github.com/jheck90/gilgamesh/internal/web"
 )
 
@@ -26,7 +28,7 @@ func (a *app) serve(ctx context.Context, args []string) error {
 	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           (&web.Server{Store: st, TrustHeader: *trust, DefaultUser: a.userName}).Handler(),
+		Handler:           (&web.Server{Store: st, TrustHeader: *trust, DefaultUser: a.userName, Photos: ocr.Tesseract{}}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -40,6 +42,9 @@ func (a *app) serve(ctx context.Context, args []string) error {
 		mode = "readers from the " + *trust + " header"
 	}
 	log.Printf("gmesh: serving %s on %s (%s)", a.dbPath, *addr, mode)
+	if _, err := exec.LookPath("tesseract"); err != nil {
+		log.Printf("gmesh: snapping by photo won't work until tesseract is installed; typed words still will")
+	}
 	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
