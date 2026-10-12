@@ -715,6 +715,13 @@ func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64,
 			msg: "Photo snaps aren’t working here right now. " + typeInstead}
 	}
 	found, ok := text.MatchPage(pageText, texts(sents))
+	// The score, never the text: it shows how near real photos come to
+	// the threshold.
+	outcome := "found the page"
+	if !ok {
+		outcome = "couldn't find the page"
+	}
+	log.Printf("web: photo snap: %d of %d words read matched, %s", found.Matched, found.Read, outcome)
 	if !ok {
 		return page{}, 0, nil, tryAgain{code: http.StatusOK,
 			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}

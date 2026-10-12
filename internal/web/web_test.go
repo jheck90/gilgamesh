@@ -1118,23 +1118,57 @@ func TestPhotoSnapThatFails(t *testing.T) {
 	}
 }
 
-func TestPhotoSnapsLogNoText(t *testing.T) {
+// captureLog collects what the app logs until the test ends.
+func captureLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
 	var logged bytes.Buffer
 	out := log.Writer()
 	log.SetOutput(&logged)
 	t.Cleanup(func() { log.SetOutput(out) })
+	return &logged
+}
 
+func TestPhotoSnapsLogNoText(t *testing.T) {
+	logged := captureLog(t)
 	srv, _ := setup(t, "")
 	broken, _ := setup(t, "", func(s *Server) { s.Photos = brokenPhotos{} })
 	snapPhoto(t, srv, "/b/1/snap", photo("“The tide always turns,” his mother used to say."))
 	snapPhoto(t, srv, "/b/1/snap", photo("A postcard from Zanzibar, wish you were here."))
 	snapPhoto(t, broken, "/b/1/snap", photo("A postcard from Zanzibar, wish you were here."))
 	if !strings.Contains(logged.String(), "tesseract") {
-		t.Errorf("a broken photo reader isn't logged for the operator:\n%s", &logged)
+		t.Errorf("a broken photo reader isn't logged for the operator:\n%s", logged)
 	}
 	for _, w := range []string{"tide", "mother", "postcard", "Zanzibar"} {
 		if strings.Contains(logged.String(), w) {
-			t.Errorf("text from a photo was logged:\n%s", &logged)
+			t.Errorf("text from a photo was logged:\n%s", logged)
 		}
+	}
+}
+
+func TestPhotoSnapsLogTheirScore(t *testing.T) {
+	// The score shows how near real photos come to finding the page.
+	cases := []struct{ name, page, want string }{
+		{"every word matched",
+			"“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"photo snap: 16 of 16 words read matched, found the page"},
+		{"a running head and page number don't match",
+			"THE CRAWL                17\nturns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"photo snap: 13 of 16 words read matched, found the page"},
+		{"under half matched",
+			"A hooded man watched. Postcards from Zanzibar, wish you were here, wish you were there.",
+			"photo snap: 4 of 15 words read matched, couldn't find the page"},
+		{"nothing matched",
+			"A postcard from Zanzibar, wish you were here.",
+			"photo snap: 0 of 8 words read matched, couldn't find the page"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			logged := captureLog(t)
+			srv, _ := setup(t, "")
+			snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			if !strings.Contains(logged.String(), c.want) {
+				t.Errorf("want %q logged:\n%s", c.want, logged)
+			}
+		})
 	}
 }
