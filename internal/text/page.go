@@ -7,7 +7,9 @@ import (
 )
 
 // Page is the run of sentences a snap matched, as indexes into the
-// sentences searched: the ones holding the first and last words matched.
+// sentences searched. Last holds the last word matched. First holds the
+// first, or an earlier sentence if the text has words before the match:
+// those may be the book's, misread.
 type Page struct {
 	First, Last int
 	// Cut is true when the text stops partway through sentence Last, as a
@@ -96,8 +98,12 @@ func MatchPage(text string, sentences []string) (page Page, ok bool) {
 			right++
 		}
 	}
+	// Words before the match may be the end of an earlier sentence,
+	// misread (or a running head). Count them as the book's, so a page
+	// never starts later than it might.
+	start := max(0, hits[first].b-min(hits[first].q, pageMaxSkip))
 	return Page{
-		First: sentenceOf[hits[first].b],
+		First: sentenceOf[start],
 		Last:  last,
 		Cut:   rest > len(more) || 2*right < rest,
 	}, true

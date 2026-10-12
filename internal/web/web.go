@@ -38,12 +38,12 @@ type Server struct {
 	DefaultUser string
 	// Photos reads the text off a snapped photo of a page.
 	Photos PhotoReader
-	// MaxPhoto caps a photo's size in bytes, and PhotoTimeout how long
-	// reading one may take. Zero means 20 MB and 30 seconds.
-	MaxPhoto     int64
-	PhotoTimeout time.Duration
 
-	tmpl *template.Template
+	// maxPhoto caps a photo's size in bytes, and photoTimeout how long
+	// reading one may take. Zero means 20 MB and 30 seconds.
+	maxPhoto     int64
+	photoTimeout time.Duration
+	tmpl         *template.Template
 }
 
 // PhotoReader reads the text off a photo of a page. The photo and its text
@@ -528,13 +528,13 @@ func snapWords(r *http.Request, sents []store.Sentence) (int, error) {
 // got that far down, so it moves to just before the page instead. The
 // photo is held in memory for this request only.
 func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (int, error) {
-	photo, err := readPhoto(w, r, cmp.Or(s.MaxPhoto, 20<<20))
+	photo, err := readPhoto(w, r, cmp.Or(s.maxPhoto, 20<<20))
 	if err != nil {
 		return 0, err
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), cmp.Or(s.PhotoTimeout, 30*time.Second))
+	ctx, cancel := context.WithTimeout(r.Context(), cmp.Or(s.photoTimeout, 30*time.Second))
 	defer cancel()
-	words, err := s.Photos.ReadPhoto(ctx, photo)
+	pageText, err := s.Photos.ReadPhoto(ctx, photo)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
 	}
@@ -543,7 +543,7 @@ func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64,
 		return 0, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
 			msg: "Photo snaps aren’t working here right now. " + typeInstead}
 	}
-	page, ok := text.MatchPage(words, texts(sents))
+	page, ok := text.MatchPage(pageText, texts(sents))
 	if !ok {
 		return 0, tryAgain{code: http.StatusOK,
 			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}
@@ -575,10 +575,11 @@ func readPhoto(w http.ResponseWriter, r *http.Request, max int64) ([]byte, error
 	tooBig := tryAgain{code: http.StatusRequestEntityTooLarge, problem: "That photo is too big", msg: typeInstead}
 	notPhoto := tryAgain{code: http.StatusUnsupportedMediaType, problem: "That isn’t a photo",
 		msg: "Take a photo of the page you’re on, or type the last 4 or more words you read."}
+	badUpload := httpError{http.StatusBadRequest, "Bad upload."}
 	r.Body = http.MaxBytesReader(w, r.Body, max+64<<10) // room for the form around the photo
 	mr, err := r.MultipartReader()
 	if err != nil {
-		return nil, httpError{http.StatusBadRequest, "Bad upload."}
+		return nil, badUpload
 	}
 	var mbe *http.MaxBytesError
 	for {
@@ -590,7 +591,7 @@ func readPhoto(w http.ResponseWriter, r *http.Request, max int64) ([]byte, error
 			return nil, notPhoto
 		}
 		if err != nil {
-			return nil, httpError{http.StatusBadRequest, "Bad upload."}
+			return nil, badUpload
 		}
 		if p.FormName() != "photo" {
 			continue
@@ -600,7 +601,7 @@ func readPhoto(w http.ResponseWriter, r *http.Request, max int64) ([]byte, error
 			return nil, tooBig
 		}
 		if err != nil {
-			return nil, httpError{http.StatusBadRequest, "Bad upload."}
+			return nil, badUpload
 		}
 		if !strings.HasPrefix(http.DetectContentType(photo), "image/") {
 			return nil, notPhoto
