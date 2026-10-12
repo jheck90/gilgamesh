@@ -166,6 +166,8 @@ CREATE TABLE usage (
   model         TEXT    NOT NULL,
   input_tokens  INTEGER NOT NULL,
   output_tokens INTEGER NOT NULL,
+  kind          TEXT    NOT NULL DEFAULT 'ingest', -- 'ingest' reads the book, 'edit' tidies its notes
+  effort        TEXT    NOT NULL DEFAULT '',       -- Anthropic effort; '' for none or not recorded
   created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX usage_user ON usage(user_id, created_at);

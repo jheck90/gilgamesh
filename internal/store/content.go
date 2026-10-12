@@ -313,6 +313,7 @@ type UsageRec struct {
 	KeyOwnerID   int64
 	Provider     string
 	Model        string
+	Effort       string
 	InputTokens  int64
 	OutputTokens int64
 }
@@ -378,8 +379,8 @@ func (s *Store) ApplyChunk(ctx context.Context, w ChunkWrite) (ChunkStats, error
 	}
 	if u := w.Usage; u != nil {
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO usage (user_id, key_owner_id, book_id, provider, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			u.UserID, u.KeyOwnerID, w.BookID, u.Provider, u.Model, u.InputTokens, u.OutputTokens); err != nil {
+			"INSERT INTO usage (user_id, key_owner_id, book_id, provider, model, effort, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			u.UserID, u.KeyOwnerID, w.BookID, u.Provider, u.Model, u.Effort, u.InputTokens, u.OutputTokens); err != nil {
 			return st, err
 		}
 	}

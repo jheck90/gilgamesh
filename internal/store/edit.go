@@ -245,8 +245,8 @@ func (s *Store) ApplyEdit(ctx context.Context, e Edit) (EditStats, error) {
 	}
 	if u := e.Usage; u != nil {
 		if _, err := tx.ExecContext(ctx,
-			"INSERT INTO usage (user_id, key_owner_id, book_id, provider, model, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
-			u.UserID, u.KeyOwnerID, e.BookID, u.Provider, u.Model, u.InputTokens, u.OutputTokens); err != nil {
+			"INSERT INTO usage (user_id, key_owner_id, book_id, provider, model, effort, input_tokens, output_tokens, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'edit')",
+			u.UserID, u.KeyOwnerID, e.BookID, u.Provider, u.Model, u.Effort, u.InputTokens, u.OutputTokens); err != nil {
 			return st, err
 		}
 	}

@@ -50,7 +50,7 @@ look as of the end of chapter N instead of your saved position.
 
 Environment: GMESH_DB, GMESH_USER, GMESH_SECRET, ANTHROPIC_API_KEY,
 GMESH_PROVIDER, GMESH_API_KEY, GMESH_BASE_URL, GMESH_MODEL, GMESH_ADDR,
-GMESH_TRUST_HEADER.
+GMESH_TRUST_HEADER, GMESH_PRICES.
 `
 
 type app struct {

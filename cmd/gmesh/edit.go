@@ -77,7 +77,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 		var used llm.Usage
 		raw, used, err = (&edit.Editor{LLM: client}).Ask(ctx, notes)
 		usage = &store.UsageRec{UserID: user.ID, KeyOwnerID: res.OwnerID, Provider: client.Provider(), Model: client.Model(),
-			InputTokens: used.InputTokens, OutputTokens: used.OutputTokens}
+			Effort: res.Config.Effort, InputTokens: used.InputTokens, OutputTokens: used.OutputTokens}
 		planner = client.Model()
 		if err != nil {
 			a.recordUsage(ctx, st, book, usage)

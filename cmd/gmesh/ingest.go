@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/jheck90/gilgamesh/internal/epub"
+	"github.com/jheck90/gilgamesh/internal/estimate"
 	"github.com/jheck90/gilgamesh/internal/extract"
 	"github.com/jheck90/gilgamesh/internal/keys"
 	"github.com/jheck90/gilgamesh/internal/llm"
@@ -35,6 +36,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	verbose := fs.Bool("v", false, "list every note the spoiler checks dropped")
 	maxCalls := fs.Int("max-calls", 0, "stop after this many model calls; run again to continue")
 	skipList := fs.String("skip", "", "sections to leave out, as numbered by --dry-run, like 1-3,40 (front matter, a preview of the next book)")
+	prices := fs.String("prices", envOr("GMESH_PRICES", ""), "JSON file of model prices that --dry-run uses instead of the built-in ones")
 	pos, err := parse(fs, args)
 	if err != nil {
 		return err
@@ -66,7 +68,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 	summary := func() {
 		fmt.Fprintf(a.out, "series: %s #%g\n", seriesName, seriesIndex)
 		fmt.Fprintf(a.out, "%d chapters, %d sentences, %d words (about %dk tokens of text)\n",
-			len(chapters), len(sentences), words, words*4/3/1000)
+			len(chapters), len(sentences), words, estimate.Tokens(words)/1000)
 		fmt.Fprintf(a.out, "extraction: %d model calls of up to %d words each\n", nChunks, *chunkWords)
 	}
 	if *dry {
@@ -79,7 +81,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 			fmt.Fprintf(a.out, "  %3d  %s (%s)\n", sec.n, sec.title, note)
 		}
 		fmt.Fprintln(a.out, "check the start and end for front matter or a preview of the next book, and leave them out with --skip")
-		return nil
+		return a.showPrice(ctx, estimate.Book{Words: words, Calls: nChunks}, *model, *effort, *prices)
 	}
 
 	st, err := a.store()
@@ -139,7 +141,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		return err
 	}
 
-	x := &extract.Extractor{Store: st, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Log: a.out, Verbose: *verbose, MaxCalls: *maxCalls}
+	x := &extract.Extractor{Store: st, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Effort: res.Config.Effort, Log: a.out, Verbose: *verbose, MaxCalls: *maxCalls}
 	if res.Borrowed(user.ID) {
 		// Recheck before every call: the admin may revoke, and the cap
 		// may run out partway through a book.
@@ -168,32 +170,141 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 }
 
 // modelClient resolves which key user's model calls run on and opens a
-// client for it. The model is the one asked for, else the key's own, else
-// (on Anthropic or Claude Code) the command's default.
+// client for it.
 func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, anthropicDefault, effort string) (llm.Client, keys.Resolved, error) {
-	bx, err := box()
-	if err != nil {
-		return nil, keys.Resolved{}, err
-	}
-	res, err := keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
+	res, err := resolveKey(ctx, st, user)
 	if err != nil {
 		return nil, res, err
 	}
-	if model != "" {
-		res.Config.Model = model
-	}
-	if p := res.Config.Provider; p == llm.ProviderAnthropic || p == llm.ProviderClaudeCode {
-		if res.Config.Model == "" {
-			res.Config.Model = anthropicDefault
-		}
-		res.Config.Effort = effort
-	}
+	res.Config = runConfig(res.Config, model, anthropicDefault, effort)
 	client, err := llm.New(res.Config)
 	if err != nil {
 		return nil, res, err
 	}
 	fmt.Fprintf(a.out, "using %s: %s %s\n", res.Source, client.Provider(), client.Model())
 	return client, res, nil
+}
+
+func resolveKey(ctx context.Context, st *store.Store, user store.User) (keys.Resolved, error) {
+	bx, err := box()
+	if err != nil {
+		return keys.Resolved{}, err
+	}
+	return keys.Resolve(ctx, st, bx, user, keys.Env(os.Getenv))
+}
+
+// runConfig sets the model a run uses on a key: the one asked for, else the
+// key's own, else (on Anthropic or Claude Code) the command's default.
+func runConfig(c llm.Config, model, anthropicDefault, effort string) llm.Config {
+	if model != "" {
+		c.Model = model
+	}
+	if p := c.Provider; p == llm.ProviderAnthropic || p == llm.ProviderClaudeCode {
+		if c.Model == "" {
+			c.Model = anthropicDefault
+		}
+		c.Effort = effort
+	}
+	return c
+}
+
+// showPrice estimates adding b, and editing it afterwards, on the models
+// those runs would use. Nothing here adds a reader or calls a model.
+func (a *app) showPrice(ctx context.Context, b estimate.Book, model, effort, pricesFile string) error {
+	prices, err := estimate.LoadPrices(pricesFile)
+	if err != nil {
+		return err
+	}
+	st, err := a.store()
+	if err != nil {
+		return err
+	}
+	user, ok, err := st.UserByName(ctx, a.userName)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Adding the book would add this reader, as admin if they're first.
+		_, hasAdmin, err := st.Admin(ctx)
+		if err != nil {
+			return err
+		}
+		user = store.User{Name: a.userName, IsAdmin: !hasAdmin}
+	}
+	cfg := llm.Config{Provider: llm.ProviderAnthropic}
+	if res, err := resolveKey(ctx, st, user); err != nil {
+		fmt.Fprintf(a.out, "no key to price with (%v); assuming an Anthropic key\n", err)
+	} else {
+		cfg = res.Config
+	}
+	modelOf := func(c llm.Config) estimate.Model {
+		return estimate.Model{Provider: c.Provider, Name: c.Model, Effort: c.Effort}
+	}
+	ingest, edit, err := estimate.ForBook(ctx, st, b,
+		modelOf(runConfig(cfg, model, llm.DefaultIngestModel, effort)), modelOf(runConfig(cfg, "", llm.DefaultAnthropicModel, "medium")), prices)
+	if err != nil {
+		return err
+	}
+	if ingest.Model.Name == "" {
+		fmt.Fprintln(a.out, "no model set on this key, so no estimate (add --model)")
+		return nil
+	}
+	basis := "output guessed: no books added on this model yet"
+	if ingest.Runs > 0 {
+		basis = fmt.Sprintf("output ratio from %d %s added on this model", ingest.Runs, plural(ingest.Runs, "book", "books"))
+	}
+	fmt.Fprintf(a.out, "estimate on %s (%s):\n  %s\n", modelName(ingest.Model), basis, priceLine(ingest))
+	basis = "notes guessed: no edits on this model yet"
+	if edit.Runs > 0 {
+		basis = fmt.Sprintf("notes scaled from %d past %s on this model", edit.Runs, plural(edit.Runs, "edit", "edits"))
+	}
+	fmt.Fprintf(a.out, "then `gmesh edit` on %s, a rough estimate (%s):\n  %s\n", modelName(edit.Model), basis, priceLine(edit))
+	return nil
+}
+
+func modelName(m estimate.Model) string {
+	s := m.Provider + " " + m.Name
+	if m.Effort != "" {
+		s += " at " + m.Effort + " effort"
+	}
+	return s
+}
+
+func priceLine(e estimate.Estimate) string {
+	s := fmt.Sprintf("input %s tokens, output %s tokens, ", tokenRange(e.Input), tokenRange(e.Output))
+	switch {
+	case e.Plan:
+		return s + "counts against your Claude plan"
+	case !e.Priced:
+		return s + fmt.Sprintf("no known price for %s (add one with --prices)", e.Model.Name)
+	case e.Dollars.Hi < 0.01:
+		return s + "under $0.01"
+	}
+	return s + fmt.Sprintf("about $%.2f–$%.2f", e.Dollars.Lo, e.Dollars.Hi)
+}
+
+func tokenRange(r estimate.Range) string {
+	if lo, hi := tokenCount(r.Lo), tokenCount(r.Hi); lo != hi {
+		return lo + "–" + hi
+	}
+	return tokenCount(r.Lo)
+}
+
+func tokenCount(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1000:
+		return fmt.Sprintf("%dk", (n+500)/1000)
+	}
+	return strconv.FormatInt(n, 10)
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 type planned struct {

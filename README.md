@@ -63,7 +63,7 @@ book that has been edited once needs `--again` to be edited again.
 go build -o gmesh ./cmd/gmesh
 
 export ANTHROPIC_API_KEY=...        # or see "Keys" below
-./gmesh ingest book.epub --dry-run  # chapters, length and number of model calls
+./gmesh ingest book.epub --dry-run  # chapters, length, model calls and a price range
 ./gmesh ingest book.epub --skip 1-3,48   # leave out front matter, back matter, next-book previews
 ./gmesh edit book --dry-run --save plan.json   # review the tidy-up, then:
 ./gmesh edit book --from plan.json
@@ -141,6 +141,28 @@ the `--dry-run` listing and skip it.
 
 Gilgamesh only reads DRM-free EPUBs and doesn't help remove DRM.
 
+### What a book costs
+
+`--dry-run` ends with a price range for adding the book, on the model and
+key the real run would use, and a rougher one for a later `edit`. Skipping
+chapters with `--skip` lowers it. Input tokens come from the book; output
+tokens follow what the same model wrote on books you've added before (a
+built-in guess until then). A Claude Code key shows token counts only, since
+the calls count against your Claude plan, and so does a model with no known
+price.
+
+Prices are built in. To correct one, or price a model on an
+OpenAI-compatible service, point `--prices FILE` (or `GMESH_PRICES`) at a
+JSON file of dollars per million tokens; models it doesn't name keep the
+built-in price:
+
+```json
+{
+  "claude-haiku-5-5": {"input": 0.10, "output": 0.50},
+  "llama-4": {"input": 0.20, "output": 0.60}
+}
+```
+
 ## Keys
 
 Bring your own key. Reading never calls a model, so a key is only needed to
@@ -190,6 +212,7 @@ admin's key. The first user created is the admin, and approves with
 | `internal/store` | SQLite schema and queries; positions are sentence numbers |
 | `internal/llm` | Anthropic (official Go SDK) and OpenAI-compatible clients |
 | `internal/keys`, `internal/secrets` | whose key pays, and keys at rest |
+| `internal/estimate` | the price range before adding a book, and the built-in prices |
 | `internal/web` | the reading web app (server-rendered, installable) |
 
 ## License
