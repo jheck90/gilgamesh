@@ -39,6 +39,9 @@ const (
 	ProviderOpenAI    = "openai"
 
 	DefaultAnthropicModel = "claude-opus-5-5"
+	// DefaultIngestModel reads the book. Haiku takes notes nearly as well
+	// for a fraction of the cost, and `gmesh edit` tidies them on Opus.
+	DefaultIngestModel = "claude-haiku-5-5"
 )
 
 func New(c Config) (Client, error) {

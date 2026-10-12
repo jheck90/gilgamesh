@@ -146,14 +146,14 @@ Gilgamesh only reads DRM-free EPUBs and doesn't help remove DRM.
 Bring your own key. Reading never calls a model, so a key is only needed to
 add books.
 
-- **Anthropic:** `ANTHROPIC_API_KEY`. The default model is `claude-opus-5-5`.
-  Set `--effort` (default `medium`) and `--model` on `ingest` and `edit`.
+- **Anthropic:** `ANTHROPIC_API_KEY`. `ingest` reads the book on
+  `claude-haiku-5-5` and `edit` tidies it on `claude-opus-5-5`. On *Children
+  of Time* that cost about $0.90 (with `edit --effort high`) against $4.25 for
+  Opus alone, with similar cards. Set `--effort` (default `medium`) and
+  `--model` on `ingest` and `edit`.
   Requests opt into server-side fallback (except on Haiku, which has none),
   so a passage a safety classifier declines is retried on a fallback model
   instead of failing.
-- **Cheaper:** `ingest --model claude-haiku-5-5`, then `edit --effort high`
-  on the default model. On *Children of Time* that cost about $0.90 against
-  $4.25 for Opus alone, with similar cards.
 - **Anything OpenAI-compatible** (OpenAI, OpenRouter, Ollama, llama.cpp,
   vLLM): `GMESH_PROVIDER=openai`, `GMESH_BASE_URL`, `GMESH_MODEL`, and
   `GMESH_API_KEY` if the server needs one. The model must support JSON-schema

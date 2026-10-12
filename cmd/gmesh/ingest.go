@@ -134,7 +134,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 		fmt.Fprintf(a.out, "resuming at call %d of %d (the --skip and --chunk-words from the first run still apply)\n", p.NextChunk+1, p.TotalChunks)
 	}
 
-	client, res, err := a.modelClient(ctx, st, user, *model, *effort)
+	client, res, err := a.modelClient(ctx, st, user, *model, llm.DefaultIngestModel, *effort)
 	if err != nil {
 		return err
 	}
@@ -168,8 +168,9 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 }
 
 // modelClient resolves which key user's model calls run on and opens a
-// client for it.
-func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, effort string) (llm.Client, keys.Resolved, error) {
+// client for it. The model is the one asked for, else the key's own, else
+// (on Anthropic) the command's default.
+func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, anthropicDefault, effort string) (llm.Client, keys.Resolved, error) {
 	bx, err := box()
 	if err != nil {
 		return nil, keys.Resolved{}, err
@@ -182,6 +183,9 @@ func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User,
 		res.Config.Model = model
 	}
 	if res.Config.Provider == llm.ProviderAnthropic {
+		if res.Config.Model == "" {
+			res.Config.Model = anthropicDefault
+		}
 		res.Config.Effort = effort
 	}
 	client, err := llm.New(res.Config)

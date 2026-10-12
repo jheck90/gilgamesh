@@ -68,7 +68,7 @@ func (a *app) edit(ctx context.Context, args []string) error {
 			return err
 		}
 	} else {
-		client, res, err := a.modelClient(ctx, st, user, *model, *effort)
+		client, res, err := a.modelClient(ctx, st, user, *model, llm.DefaultAnthropicModel, *effort)
 		if err != nil {
 			return err
 		}
