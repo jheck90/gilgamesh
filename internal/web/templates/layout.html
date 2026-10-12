@@ -54,6 +54,21 @@
 <h1>{{.Book.Title}}</h1>
 {{if .HasPos}}<p class="where">{{.Where}}</p>{{end}}
 
+{{if .Snapped}}
+<section class="page">
+  <h2>On this page</h2>
+  {{with .Named}}
+  <ul class="entities">
+  {{range .}}
+    <li><a href="/b/{{$.Book.ID}}/e/{{.ID}}"><span class="name">{{.Name}}</span>{{if .Aliases}} <span class="aka">{{range $i, $a := .Aliases}}{{if $i}}, {{end}}{{$a}}{{end}}</span>{{end}}<span class="count">{{.Facts}}</span></a></li>
+  {{end}}
+  </ul>
+  {{else}}
+  <p class="empty">No one and nothing named on this page so far has a card.</p>
+  {{end}}
+</section>
+{{end}}
+
 {{if .Next}}
 <form method="post" action="/b/{{.Book.ID}}/next">
   <button class="primary" type="submit">I finished {{.Next}}</button>
@@ -140,6 +155,8 @@
 <p>{{.Question}}</p>
 <form method="post" action="/b/{{.Book.ID}}/back">
   <input type="hidden" name="ord" value="{{.Ord}}">
+  <input type="hidden" name="first" value="{{.First}}">
+  <input type="hidden" name="last" value="{{.Last}}">
   <button class="primary" type="submit">Move back</button>
 </form>
 <p><a href="/b/{{.Book.ID}}">Keep my place</a></p>

@@ -91,6 +91,7 @@ button.primary {
 }
 .jump summary { font: 15px system-ui, sans-serif; color: var(--accent); cursor: pointer; padding: 6px 0; }
 .search { margin-top: 16px; }
+.page { margin-bottom: 20px; }
 .timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .timeline .name { font-weight: 600; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

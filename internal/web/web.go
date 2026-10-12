@@ -8,6 +8,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
 	"io/fs"
@@ -372,6 +373,14 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	if pg, ok := snapped(r); ok {
+		named, err := s.namedOn(ctx, rd, es, pg)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		data["Snapped"], data["Named"] = true, named
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	type group struct {
 		Type     string
@@ -401,6 +410,41 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 	data["Query"] = q
 	data["Total"] = total
 	s.render(w, "book", data)
+}
+
+// snapped is the page a snap sent the reader to the book from, if any.
+func snapped(r *http.Request) (page, bool) {
+	first, err1 := strconv.Atoi(r.FormValue("first"))
+	last, err2 := strconv.Atoi(r.FormValue("last"))
+	return page{first, last}, err1 == nil && err2 == nil && 0 <= first && first <= last
+}
+
+// namedOn lists the entities among es that page pg names up to the
+// reader's position, in the order it names them. Only the names and
+// aliases es has at the position count, so an alias revealed later on
+// the page doesn't list anyone.
+func (s *Server) namedOn(ctx context.Context, rd reading, es []store.EntitySummary, pg page) ([]store.EntitySummary, error) {
+	sents, err := s.Store.SentencesBetween(ctx, rd.book.ID, pg.first, min(pg.last, rd.pos.Ord))
+	if err != nil {
+		return nil, err
+	}
+	var out []store.EntitySummary
+	listed := map[int64]bool{}
+	for _, se := range sents {
+		for _, e := range es {
+			if listed[e.ID] {
+				continue
+			}
+			for _, n := range append([]string{e.Name}, e.Aliases...) {
+				if text.ContainsName(se.Text, text.Key(n)) {
+					listed[e.ID] = true
+					out = append(out, e)
+					break
+				}
+			}
+		}
+	}
+	return out, nil
 }
 
 func matches(e store.EntitySummary, q string) bool {
@@ -471,12 +515,13 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	var ord int
+	var pg page
+	var ord int                   // the sentence on it the reader has read to
 	var question []store.Sentence // the page, when the snap must ask how far down the reader has got
 	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-		ord, question, err = s.snapPhoto(w, r, rd.book.ID, sents)
+		pg, ord, question, err = s.snapPhoto(w, r, rd.book.ID, sents)
 	} else {
-		ord, err = snapWords(r, sents)
+		pg, ord, err = snapWords(r, sents)
 	}
 	var again tryAgain
 	if errors.As(err, &again) {
@@ -515,15 +560,19 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	s.snapTo(w, r, user, rd, ord)
+	s.snapTo(w, r, user, rd, pg, ord)
 }
 
-// snapTo moves the reader's position to sentence ord after a snap. Ahead of
-// the saved position, or with none saved, it moves straight there, and to
-// the same sentence it changes nothing. Behind it, it asks first: a snap of
-// an earlier page, rereading or by accident, mustn't silently move the
-// reader back.
-func (s *Server) snapTo(w http.ResponseWriter, r *http.Request, user store.User, rd reading, ord int) {
+// page is a snapped page, from the first sentence it shows any of to the
+// last.
+type page struct{ first, last int }
+
+// snapTo moves the reader's position to sentence ord of page pg after a
+// snap. Ahead of the saved position, or with none saved, it moves straight
+// there, and to the same sentence it changes nothing. Behind it, it asks
+// first: a snap of an earlier page, rereading or by accident, mustn't
+// silently move the reader back.
+func (s *Server) snapTo(w http.ResponseWriter, r *http.Request, user store.User, rd reading, pg page, ord int) {
 	switch {
 	case rd.pos != nil && ord == rd.pos.Ord:
 	case rd.pos != nil && ord < rd.pos.Ord:
@@ -532,6 +581,8 @@ func (s *Server) snapTo(w http.ResponseWriter, r *http.Request, user store.User,
 			"Book":     rd.book,
 			"Question": rd.backQuestion(ord),
 			"Ord":      ord,
+			"First":    pg.first,
+			"Last":     pg.last,
 		})
 		return
 	default:
@@ -540,7 +591,13 @@ func (s *Server) snapTo(w http.ResponseWriter, r *http.Request, user store.User,
 			return
 		}
 	}
-	toBook(w, r, rd)
+	toPage(w, r, rd, pg)
+}
+
+// toPage sends the reader back to the book after a snap, to see who's named
+// on the page they snapped.
+func toPage(w http.ResponseWriter, r *http.Request, rd reading, pg page) {
+	http.Redirect(w, r, fmt.Sprintf("/b/%d?first=%d&last=%d", rd.book.ID, pg.first, pg.last), http.StatusSeeOther)
 }
 
 // backQuestion asks whether to move back to sentence ord, naming both
@@ -565,8 +622,9 @@ func (rd reading) backQuestion(ord int) string {
 }
 
 // back moves the position to sentence ord once the reader has said "Move
-// back". Like the chapter picker it takes any sentence in the book: it
-// only ever moves the reader's own position.
+// back", then shows who's named on the page they snapped. Like the chapter
+// picker it takes any sentence in the book: it only ever moves the reader's
+// own position.
 func (s *Server) back(w http.ResponseWriter, r *http.Request) {
 	user, rd, err := s.readingFor(r)
 	if err != nil {
@@ -580,6 +638,10 @@ func (s *Server) back(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
 		s.fail(w, err)
+		return
+	}
+	if pg, ok := snapped(r); ok {
+		toPage(w, r, rd, pg)
 		return
 	}
 	toBook(w, r, rd)
@@ -604,7 +666,7 @@ func (s *Server) line(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, httpError{http.StatusBadRequest, "That sentence isn’t on the page."})
 		return
 	}
-	s.snapTo(w, r, user, rd, ord)
+	s.snapTo(w, r, user, rd, page{first, last}, ord)
 }
 
 // tryAgain is a snap that didn't move the position. The reader sees why,
@@ -619,57 +681,60 @@ type tryAgain struct {
 
 func (e tryAgain) Error() string { return e.problem + " " + e.msg }
 
-// snapWords moves to the sentence the reader's typed words end in.
-func snapWords(r *http.Request, sents []store.Sentence) (int, error) {
+// snapWords moves to the sentence the reader's typed words end in. The
+// page is the sentences they match.
+func snapWords(r *http.Request, sents []store.Sentence) (pg page, ord int, err error) {
 	words := r.FormValue("words")
-	page, ok := text.MatchPage(words, texts(sents))
+	found, ok := text.MatchPage(words, texts(sents))
 	if !ok {
-		return 0, tryAgain{code: http.StatusOK, words: words,
+		return page{}, 0, tryAgain{code: http.StatusOK, words: words,
 			msg: "Type 4 or more words just as they’re printed, or pick a chapter instead."}
 	}
-	return sents[page.Last].Ord, nil
+	pg = page{sents[found.First].Ord, sents[found.Last].Ord}
+	return pg, pg.last, nil
 }
 
 // snapPhoto moves to the end of the page in a photo: its last sentence
 // shown whole. If anything is revealed on the page, the reader may not have
 // got that far down, so instead of an ord it returns the page's sentences
 // for the line question. The photo is held in memory for this request only.
-func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (ord int, question []store.Sentence, err error) {
+func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64, sents []store.Sentence) (pg page, ord int, question []store.Sentence, err error) {
 	photo, err := readPhoto(w, r, cmp.Or(s.maxPhoto, 20<<20))
 	if err != nil {
-		return 0, nil, err
+		return page{}, 0, nil, err
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), cmp.Or(s.photoTimeout, 30*time.Second))
 	defer cancel()
 	pageText, err := s.Photos.ReadPhoto(ctx, photo)
 	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
+		return page{}, 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Reading that photo took too long", msg: typeInstead}
 	}
 	if err != nil {
 		log.Printf("web: read photo: %v", err)
-		return 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
+		return page{}, 0, nil, tryAgain{code: http.StatusServiceUnavailable, problem: "Couldn’t read that photo",
 			msg: "Photo snaps aren’t working here right now. " + typeInstead}
 	}
-	page, ok := text.MatchPage(pageText, texts(sents))
+	found, ok := text.MatchPage(pageText, texts(sents))
 	if !ok {
-		return 0, nil, tryAgain{code: http.StatusOK,
+		return page{}, 0, nil, tryAgain{code: http.StatusOK,
 			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}
 	}
-	end := page.Last
-	if page.Cut {
+	pg = page{sents[found.First].Ord, sents[found.Last].Ord}
+	end := found.Last
+	if found.Cut {
 		end--
 	}
-	if end < page.First {
-		return sents[page.First].Ord - 1, nil, nil // no sentence shown whole
+	if end < found.First {
+		return pg, pg.first - 1, nil, nil // no sentence shown whole
 	}
-	revealed, err := s.Store.RevealsBetween(r.Context(), bookID, sents[page.First].Ord, sents[end].Ord)
+	revealed, err := s.Store.RevealsBetween(r.Context(), bookID, pg.first, sents[end].Ord)
 	if err != nil {
-		return 0, nil, err
+		return page{}, 0, nil, err
 	}
 	if revealed {
-		return 0, sents[page.First : end+1], nil
+		return pg, 0, sents[found.First : end+1], nil
 	}
-	return sents[end].Ord, nil, nil
+	return pg, sents[end].Ord, nil, nil
 }
 
 const typeInstead = "Type the last 4 or more words you read instead, or pick a chapter."

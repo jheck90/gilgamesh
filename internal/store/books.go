@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math"
 )
 
 type Book struct {
@@ -157,7 +158,13 @@ func (s *Store) Chapters(ctx context.Context, bookID int64) ([]Chapter, error) {
 }
 
 func (s *Store) Sentences(ctx context.Context, bookID int64) ([]Sentence, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT ord, chapter_idx, para, text FROM sentences WHERE book_id = ? ORDER BY ord", bookID)
+	return s.SentencesBetween(ctx, bookID, 0, math.MaxInt)
+}
+
+// SentencesBetween returns a book's sentences from sentence first to
+// sentence last, in order.
+func (s *Store) SentencesBetween(ctx context.Context, bookID int64, first, last int) ([]Sentence, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT ord, chapter_idx, para, text FROM sentences WHERE book_id = ? AND ord BETWEEN ? AND ? ORDER BY ord", bookID, first, last)
 	if err != nil {
 		return nil, err
 	}
