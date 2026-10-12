@@ -275,10 +275,13 @@ func (q *Queue) add(ctx context.Context, a store.QueuedAdd) error {
 		return err
 	}
 	x := &extract.Extractor{Store: q.Store, LLM: client, UserID: user.ID, KeyOwnerID: res.OwnerID, Effort: cfg.Effort, Log: q.Log}
-	// Recheck before every call: a loan may be revoked, or its allowance
+	// Recheck before every call: borrowing may be revoked, or its allowance
 	// run out, partway through a book.
 	x.Allow = func(ctx context.Context) error {
-		_, err := q.resolve(ctx, user)
+		now, err := q.resolve(ctx, user)
+		if err == nil && now.OwnerID != res.OwnerID {
+			err = errors.New("the key changed; resume to carry on with the new one")
+		}
 		return err
 	}
 	if err := x.Run(ctx, book); err != nil || !a.ThenEdit {
@@ -390,7 +393,8 @@ func (q *Queue) stored(ctx context.Context, a store.QueuedAdd) (store.Book, erro
 	if err != nil {
 		return store.Book{}, err
 	}
-	if err := q.Store.SetAddBook(ctx, a.ID, id); err != nil {
+	// Even if it's being cancelled: Cancel needs the id to remove the book.
+	if err := q.Store.SetAddBook(context.WithoutCancel(ctx), a.ID, id); err != nil {
 		return store.Book{}, err
 	}
 	b, _, err := q.Store.BookByID(ctx, id)

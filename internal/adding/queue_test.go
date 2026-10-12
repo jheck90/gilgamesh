@@ -244,7 +244,7 @@ func TestOneAtATime(t *testing.T) {
 	}
 }
 
-func TestRevokingALoanPauses(t *testing.T) {
+func TestRevokedBorrowingPauses(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)
 	q := f.queue()
@@ -271,7 +271,7 @@ func TestRevokingALoanPauses(t *testing.T) {
 	}
 	waitFor(t, q, own, store.AddDone)
 	if _, err := q.Start(ctx, f.alice, f.book(t, "Another", 1)); err == nil {
-		t.Error("alice started a book with her loan revoked")
+		t.Error("alice started a book after her borrowing was revoked")
 	}
 }
 
@@ -398,5 +398,34 @@ func TestChangedFileIsNotRead(t *testing.T) {
 	a := waitFor(t, q, id, store.AddPaused)
 	if !strings.Contains(a.Reason, "changed") || a.BookID != 0 || len(f.model.calls()) != 0 {
 		t.Errorf("entry = %+v after %d calls; want paused before storing or reading anything", a, len(f.model.calls()))
+	}
+}
+
+func TestPausingKeepsACallThatFinished(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	q := f.queue()
+	var id int64
+	f.model.setHook(func(_ context.Context, n int) error {
+		if n == 2 {
+			return q.Pause(ctx, f.admin, id) // paused while the reply comes back
+		}
+		return nil
+	})
+	id, err := q.Start(ctx, f.admin, f.book(t, "Crawl", 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	run(t, q)
+	a := waitFor(t, q, id, store.AddPaused)
+	for i := 0; i < 100 && a.Progress.NextChunk < 2; i++ {
+		time.Sleep(5 * time.Millisecond)
+		a, _, _ = f.st.QueuedAddByID(ctx, id)
+	}
+	if a.Progress.NextChunk != 2 {
+		t.Errorf("next call = %d, want the second call's notes kept", a.Progress.NextChunk+1)
+	}
+	if used, _ := f.st.IngestUsage(ctx, "fake"); len(used) != 1 || used[0].Input != 100 {
+		t.Errorf("usage = %+v, want both calls counted", used)
 	}
 }

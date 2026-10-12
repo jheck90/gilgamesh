@@ -204,8 +204,8 @@
     {{if .Yours}}
     <div class="row">
       {{if .CanPause}}<form method="post" action="/adding/{{.ID}}/pause"><button type="submit">Pause</button></form>{{end}}
-      {{if eq .State "Paused"}}<form method="post" action="/adding/{{.ID}}/resume"><button type="submit">Resume</button></form>{{end}}
-      {{if ne .State "Done"}}<form method="post" action="/adding/{{.ID}}/cancel"><button type="submit">Cancel</button></form>{{end}}
+      {{if .CanResume}}<form method="post" action="/adding/{{.ID}}/resume"><button type="submit">Resume</button></form>{{end}}
+      {{if .CanCancel}}<form method="post" action="/adding/{{.ID}}/cancel"><button type="submit">Cancel</button></form>{{end}}
     </div>
     {{end}}
   </li>

@@ -129,8 +129,8 @@ func (s *Store) DeleteAdd(ctx context.Context, id int64) error {
 	return err
 }
 
-// ResumeInterruptedAdds puts back in line whatever was running when the
-// server stopped, ahead of the rest since it's oldest.
+// ResumeInterruptedAdds puts back in line, in its place by id, whatever
+// was running when the server stopped.
 func (s *Store) ResumeInterruptedAdds(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE add_queue SET state = ? WHERE state IN (?, ?)", AddWaiting, AddAdding, AddEditing)
 	return err

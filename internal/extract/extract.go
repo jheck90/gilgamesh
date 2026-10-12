@@ -120,7 +120,9 @@ func (x *Extractor) Run(ctx context.Context, b store.Book) error {
 		w, warnings := validate(out, c, k)
 		w.BookID, w.SeriesID, w.NextChunk = b.ID, b.SeriesID, i+1
 		w.Usage = x.usageRec(usage)
-		st, err := x.Store.ApplyChunk(ctx, w)
+		// The call is paid for: keep its notes and usage even if the run is
+		// being stopped.
+		st, err := x.Store.ApplyChunk(context.WithoutCancel(ctx), w)
 		if err != nil {
 			return err
 		}

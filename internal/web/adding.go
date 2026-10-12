@@ -13,14 +13,16 @@ import (
 
 // queued is one entry on the queue page.
 type queued struct {
-	ID       int64
-	Name     string // the book's title once stored, else the file's name
-	Started  string // who started it
-	State    string
-	Reason   string
-	Call     string // "call 3 of 77" while reading
-	Yours    bool   // the viewer may pause, resume or cancel it
-	CanPause bool
+	ID        int64
+	Name      string // the book's title once stored, else the file's name
+	Started   string // who started it
+	State     string
+	Reason    string
+	Call      string // "call 3 of 77" while reading
+	Yours     bool   // the viewer may pause, resume or cancel it
+	CanPause  bool
+	CanResume bool
+	CanCancel bool
 }
 
 func (s *Server) queued(r *http.Request, viewer store.User, a store.QueuedAdd) (queued, error) {
@@ -51,6 +53,8 @@ func (s *Server) queued(r *http.Request, viewer store.User, a store.QueuedAdd) (
 		q.Call = fmt.Sprintf("call %d of %d", p.NextChunk+1, p.TotalChunks)
 	}
 	q.CanPause = a.State == store.AddWaiting || a.State == store.AddAdding || a.State == store.AddEditing
+	q.CanResume = a.State == store.AddPaused
+	q.CanCancel = a.State != store.AddDone
 	return q, nil
 }
 

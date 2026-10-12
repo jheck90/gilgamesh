@@ -201,7 +201,7 @@ admin's key. The first user created is the admin, and approves with
 
 `serve` can also add books in the background, one at a time across the
 instance; the rest wait in line. Each runs on the key of the reader who
-started it, checked again before every model call, so a revoked loan or a
+started it, checked again before every model call, so revoked borrowing or a
 used-up allowance pauses it with the reason and the next book starts.
 "Books being added", linked from the home page, shows who started each,
 which call it's on and its state. The reader who started it, or the admin,
