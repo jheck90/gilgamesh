@@ -19,6 +19,9 @@ type Tesseract struct{}
 // ReadPhoto returns the text Tesseract reads off photo. If ctx ends first,
 // the program is killed and ctx's error returned.
 func (Tesseract) ReadPhoto(ctx context.Context, photo []byte) (string, error) {
+	if pgm, ok := upright(photo); ok {
+		photo = pgm
+	}
 	cmd := exec.CommandContext(ctx, "tesseract", "stdin", "stdout", "-l", "eng")
 	cmd.Stdin = bytes.NewReader(photo)
 	var out, stderr bytes.Buffer
