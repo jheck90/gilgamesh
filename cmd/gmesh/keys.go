@@ -62,7 +62,7 @@ func (a *app) key(ctx context.Context, args []string) error {
 
 func (a *app) keySet(ctx context.Context, user store.User, args []string) error {
 	fs := flag.NewFlagSet("key set", flag.ContinueOnError)
-	provider := fs.String("provider", llm.ProviderAnthropic, "anthropic or openai (any OpenAI-compatible API)")
+	provider := fs.String("provider", llm.ProviderAnthropic, "anthropic or openai (any OpenAI-compatible API); a Claude Code key goes in the server's environment")
 	model := fs.String("model", "", "default model for this key")
 	baseURL := fs.String("base-url", "", "API base URL, for OpenRouter, Ollama and the like")
 	if _, err := parse(fs, args); err != nil {
@@ -70,6 +70,9 @@ func (a *app) keySet(ctx context.Context, user store.User, args []string) error 
 	}
 	if _, err := llm.New(llm.Config{Provider: *provider, Model: *model}); err != nil {
 		return err
+	}
+	if *provider == llm.ProviderClaudeCode {
+		return errors.New("a Claude Code key can't be stored per reader yet: the admin sets GMESH_PROVIDER=claude-code and CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) in the server's environment")
 	}
 	bx, err := box()
 	if err != nil {
@@ -194,6 +197,15 @@ func (a *app) keyAdmin(ctx context.Context, admin store.User, sub string, args [
 	}
 	if !ok {
 		return fmt.Errorf("no user named %q", pos[0])
+	}
+	if sub == "approve" {
+		bx, err := box()
+		if err != nil {
+			return err
+		}
+		if res, err := keys.Resolve(ctx, a.st, bx, admin, keys.Env(os.Getenv)); err == nil && res.Config.Provider == llm.ProviderClaudeCode {
+			return keys.ErrNotBorrowable
+		}
 	}
 	status := map[string]string{"approve": store.GrantApproved, "deny": store.GrantDenied, "revoke": store.GrantRevoked}[sub]
 	if err := a.st.DecideGrant(ctx, target.ID, status, *capTokens, admin.ID); err != nil {

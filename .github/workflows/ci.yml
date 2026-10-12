@@ -53,3 +53,20 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # The same image plus the `claude` CLI, for GMESH_PROVIDER=claude-code.
+      - id: meta-cc
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=claude-code
+            type=sha,prefix=sha-,suffix=-claude-code
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: claude-code
+          push: true
+          tags: ${{ steps.meta-cc.outputs.tags }}
+          labels: ${{ steps.meta-cc.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

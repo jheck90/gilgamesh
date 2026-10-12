@@ -169,7 +169,7 @@ func (a *app) ingest(ctx context.Context, args []string) error {
 
 // modelClient resolves which key user's model calls run on and opens a
 // client for it. The model is the one asked for, else the key's own, else
-// (on Anthropic) the command's default.
+// (on Anthropic or Claude Code) the command's default.
 func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User, model, anthropicDefault, effort string) (llm.Client, keys.Resolved, error) {
 	bx, err := box()
 	if err != nil {
@@ -182,7 +182,7 @@ func (a *app) modelClient(ctx context.Context, st *store.Store, user store.User,
 	if model != "" {
 		res.Config.Model = model
 	}
-	if res.Config.Provider == llm.ProviderAnthropic {
+	if p := res.Config.Provider; p == llm.ProviderAnthropic || p == llm.ProviderClaudeCode {
 		if res.Config.Model == "" {
 			res.Config.Model = anthropicDefault
 		}

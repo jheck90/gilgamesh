@@ -34,6 +34,12 @@ func (env Env) config() (llm.Config, bool) {
 	if provider == "" {
 		provider = llm.ProviderAnthropic
 	}
+	base := env("GMESH_BASE_URL")
+	if provider == llm.ProviderClaudeCode {
+		// Only its own token: an API key in GMESH_API_KEY isn't one. Without a
+		// token the claude CLI uses its own login.
+		return llm.Config{Provider: provider, APIKey: env("CLAUDE_CODE_OAUTH_TOKEN"), Model: env("GMESH_MODEL")}, true
+	}
 	key := env("GMESH_API_KEY")
 	if key == "" {
 		switch provider {
@@ -43,7 +49,6 @@ func (env Env) config() (llm.Config, bool) {
 			key = env("OPENAI_API_KEY")
 		}
 	}
-	base := env("GMESH_BASE_URL")
 	// Local OpenAI-compatible servers often need no key at all.
 	if key == "" && !(provider == llm.ProviderOpenAI && base != "") {
 		return llm.Config{}, false
@@ -51,7 +56,10 @@ func (env Env) config() (llm.Config, bool) {
 	return llm.Config{Provider: provider, APIKey: key, BaseURL: base, Model: env("GMESH_MODEL")}, true
 }
 
-var ErrNoKey = errors.New("no API key: add your own with `gmesh key set`, or ask to use the admin's with `gmesh key request`")
+// ErrNotBorrowable: a Claude Code key is the admin's own subscription.
+var ErrNotBorrowable = errors.New("the admin's key is a Claude Code key, which can't be borrowed")
+
+var ErrNoKey = errors.New("no key: add your own with `gmesh key set`, or ask to use the admin's with `gmesh key request`")
 
 // Resolve picks the key for user: their own, else (for the admin) the
 // environment, else the admin's key if the user has an approved grant with
@@ -64,7 +72,7 @@ func Resolve(ctx context.Context, st *store.Store, box *secrets.Box, user store.
 		if cfg, ok := env.config(); ok {
 			return Resolved{Config: cfg, OwnerID: user.ID, Source: "environment", Remaining: -1}, nil
 		}
-		return Resolved{}, errors.New("no API key: set one with `gmesh key set` or export ANTHROPIC_API_KEY (or GMESH_PROVIDER=openai with OPENAI_API_KEY / GMESH_BASE_URL)")
+		return Resolved{}, errors.New("no key: set one with `gmesh key set` or export ANTHROPIC_API_KEY (or GMESH_PROVIDER=openai with OPENAI_API_KEY / GMESH_BASE_URL, or GMESH_PROVIDER=claude-code)")
 	}
 
 	g, ok, err := st.GetGrant(ctx, user.ID)
@@ -99,6 +107,9 @@ func Resolve(ctx context.Context, st *store.Store, box *secrets.Box, user store.
 		if cfg, ok = env.config(); !ok {
 			return Resolved{}, errors.New("your request is approved, but the admin hasn't set up a key yet")
 		}
+	}
+	if cfg.Provider == llm.ProviderClaudeCode {
+		return Resolved{}, ErrNotBorrowable
 	}
 	return Resolved{Config: cfg, OwnerID: admin.ID, Source: "admin's key", Remaining: remaining}, nil
 }

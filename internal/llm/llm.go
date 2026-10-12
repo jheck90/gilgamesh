@@ -27,7 +27,7 @@ type Client interface {
 }
 
 type Config struct {
-	Provider string // "anthropic" or "openai" (any OpenAI-compatible API)
+	Provider string // "anthropic", "openai" (any OpenAI-compatible API) or "claude-code"
 	APIKey   string
 	BaseURL  string
 	Model    string
@@ -37,6 +37,9 @@ type Config struct {
 const (
 	ProviderAnthropic = "anthropic"
 	ProviderOpenAI    = "openai"
+	// ProviderClaudeCode runs calls through the `claude` CLI on a Claude
+	// subscription. APIKey holds its OAuth token.
+	ProviderClaudeCode = "claude-code"
 
 	DefaultAnthropicModel = "claude-opus-5-5"
 	// DefaultIngestModel reads the book. Haiku takes notes nearly as well
@@ -53,6 +56,8 @@ func New(c Config) (Client, error) {
 			return nil, fmt.Errorf("llm: provider openai needs a model name")
 		}
 		return newOpenAI(c), nil
+	case ProviderClaudeCode:
+		return newClaudeCode(c), nil
 	}
-	return nil, fmt.Errorf("llm: unknown provider %q (want %s or %s)", c.Provider, ProviderAnthropic, ProviderOpenAI)
+	return nil, fmt.Errorf("llm: unknown provider %q (want %s, %s or %s)", c.Provider, ProviderAnthropic, ProviderOpenAI, ProviderClaudeCode)
 }
