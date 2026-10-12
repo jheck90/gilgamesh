@@ -262,6 +262,20 @@ func (s *Store) VisibleMarkers(ctx context.Context, pos Position) ([]Marker, err
 	return out, rows.Err()
 }
 
+// RevealsBetween reports whether anything is revealed in a book from
+// sentence first to sentence last: a fact, an alias (a card's title is
+// one), an entity first met there, or a time marker.
+func (s *Store) RevealsBetween(ctx context.Context, bookID int64, first, last int) (bool, error) {
+	var found bool
+	err := s.db.QueryRowContext(ctx, `SELECT
+		EXISTS (SELECT 1 FROM facts WHERE book_id = ?1 AND revealed_ord BETWEEN ?2 AND ?3) OR
+		EXISTS (SELECT 1 FROM aliases WHERE book_id = ?1 AND revealed_ord BETWEEN ?2 AND ?3) OR
+		EXISTS (SELECT 1 FROM entities WHERE first_book_id = ?1 AND first_ord BETWEEN ?2 AND ?3) OR
+		EXISTS (SELECT 1 FROM time_markers WHERE book_id = ?1 AND ord BETWEEN ?2 AND ?3)`,
+		bookID, first, last).Scan(&found)
+	return found, err
+}
+
 type AliasRec struct {
 	Alias string
 	Ord   int

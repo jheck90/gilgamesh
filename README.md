@@ -6,8 +6,8 @@ met so far: just the facts the book has given you, nothing past your page.
 
 Status: early. `gmesh` reads an EPUB, takes position-tagged notes on it
 with a model, and serves a small web app you can install on your phone to
-look them up. Snapping a page by photo, the visual timeline and reread hints
-come next.
+look them up, and to set where you are by snapping the page you're on. The
+visual timeline and reread hints come next.
 
 ## How spoilers are kept out
 
@@ -88,10 +88,26 @@ docker exec -it -e ANTHROPIC_API_KEY=... <container> gmesh ingest /books/book.ep
 ```
 
 Open it on your phone and use "Add to Home Screen". Tap "I finished ..."
-at the end of each chapter. Partway through one, type the last 4 or more
-words you read and tap "Snap" to move to that sentence. Titles of chapters
-you haven't reached stay hidden, and anything you haven't met yet returns
-the same "Nothing here yet" as something that doesn't exist.
+at the end of each chapter. Partway through one, snap the page you're on:
+
+- **Photo of your page** opens the camera. Gilgamesh finds the page in the
+  book and moves you to its last whole sentence. A sentence cut off at the
+  bottom counts as the next page's. If anything is revealed on the page (a
+  fact, a name, someone new, a time marker), it can't know how far down
+  you've read, so it moves you to just before the page instead.
+- **Or type the last 4 or more words you read** and tap "Snap" to move to
+  the sentence they end in.
+
+Titles of chapters you haven't reached stay hidden, and anything you
+haven't met yet returns the same "Nothing here yet" as something that
+doesn't exist.
+
+Photos are read on the server by [Tesseract](https://github.com/tesseract-ocr/tesseract)
+(English), matched against the book's own text, and thrown away. They're
+never written to disk, the database or the log, and no model sees them. The
+Docker image includes Tesseract. Built from source, photo snaps need the
+`tesseract` program on the PATH (`apt install tesseract-ocr`, `brew install
+tesseract`). Without it everything else, typed words included, still works.
 
 There are no accounts. Run it for yourself on a private network, or behind
 an authenticating proxy with `--trust-header Remote-User` so each reader
@@ -140,6 +156,7 @@ admin's key. The first user created is the admin, and approves with
 | `cmd/gmesh` | the CLI |
 | `internal/epub` | EPUB parsing, chapters split on table-of-contents anchors |
 | `internal/text` | sentence splitting, name matching, and finding a snapped page |
+| `internal/ocr` | reading a snapped photo with the `tesseract` program |
 | `internal/extract` | chunking, the prompt, and the spoiler checks (`validate.go`) |
 | `internal/edit` | the whole-book tidy-up and its checks |
 | `internal/store` | SQLite schema and queries; positions are sentence numbers |

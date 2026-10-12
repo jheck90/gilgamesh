@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/gmesh ./cmd/gmesh
 
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates tzdata \
+RUN apk add --no-cache ca-certificates tzdata tesseract-ocr tesseract-ocr-data-eng \
  && adduser -D -u 1000 gmesh \
  && mkdir /data && chown gmesh:gmesh /data
 COPY --from=build /out/gmesh /usr/local/bin/gmesh

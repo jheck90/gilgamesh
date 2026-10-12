@@ -1,6 +1,7 @@
 package text
 
 import (
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -9,6 +10,9 @@ import (
 // sentences searched: the ones holding the first and last words matched.
 type Page struct {
 	First, Last int
+	// Cut is true when the text stops partway through sentence Last, as a
+	// photo does when a sentence runs on to the next page.
+	Cut bool
 }
 
 const (
@@ -19,11 +23,13 @@ const (
 
 // MatchPage finds text among a book's sentences, given in reading order.
 // It matches runs of consecutive words, so a word added, missed or
-// misread here and there lowers the score rather than breaking the match.
+// misread here and there lowers the score rather than breaking the match,
+// and joins words split by a hyphen at the end of a line.
 // ok is false unless at least four words, and half of them, are found.
 // When the text matches equally well in more than one place, the earliest
 // wins.
 func MatchPage(text string, sentences []string) (page Page, ok bool) {
+	text = lineHyphen.ReplaceAllString(text, "$1$2")
 	q := pageWords(text)         // the text's words
 	starts := map[string][]int{} // each run of the text, and where it starts
 	for i := 0; i+pageRun <= len(q); i++ {
@@ -78,8 +84,27 @@ func MatchPage(text string, sentences []string) (page Page, ok bool) {
 	for hits[first].prev >= 0 {
 		first = hits[first].prev
 	}
-	return Page{First: sentenceOf[hits[first].b], Last: sentenceOf[hits[best].b+pageRun-1]}, true
+	end := hits[best].b + pageRun // the book word after the last one matched
+	last := sentenceOf[end-1]
+	more := q[hits[best].q+pageRun:] // the text's words after it
+	// The last words on a page can be misread too, so the rest of the
+	// sentence counts as shown if the text goes on as far, with at least
+	// half of those words read right.
+	rest, right := 0, 0
+	for ; end+rest < len(book) && sentenceOf[end+rest] == last; rest++ {
+		if rest < len(more) && more[rest] == book[end+rest] {
+			right++
+		}
+	}
+	return Page{
+		First: sentenceOf[hits[first].b],
+		Last:  last,
+		Cut:   rest > len(more) || 2*right < rest,
+	}, true
 }
+
+// lineHyphen finds a word split by a hyphen at the end of a line.
+var lineHyphen = regexp.MustCompile(`(\pL)[-‐][ \t]*\r?\n\s*(\pL)`)
 
 // pageWords splits text into the words pages are matched on, folded like
 // names.

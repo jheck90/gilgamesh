@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="/static/icon-180.png">
 <link rel="stylesheet" href="/static/style.css">
 <script src="/static/register.js" defer></script>
+<script src="/static/snap.js" defer></script>
 </head>
 <body>
 <header class="top">
@@ -90,6 +91,11 @@
 {{template "foot" .}}{{end}}
 
 {{define "snapform"}}
+<form method="post" action="/b/{{.Book.ID}}/snap" enctype="multipart/form-data" class="row">
+  <label for="photo" class="button">Photo of your page</label>
+  <input id="photo" name="photo" type="file" accept="image/*" capture="environment" class="sr">
+  <button type="submit">Snap</button>
+</form>
 <form method="post" action="/b/{{.Book.ID}}/snap" class="row">
   <label for="words" class="sr">The last 4 or more words you read</label>
   <input id="words" name="words" type="text" value="{{.Words}}" placeholder="Last 4 or more words you read" autocomplete="off">
@@ -109,9 +115,9 @@
 {{end}}
 
 {{define "unmatched"}}{{template "head" .}}
-<h1>Couldn't find this page</h1>
+<h1>{{with .Problem}}{{.}}{{else}}Couldn't find this page{{end}}</h1>
 {{if .HasPos}}<p class="where">Still: {{.Where}}</p>{{end}}
-<p>Type 4 or more words just as they’re printed, or pick a chapter instead.</p>
+<p>{{.Message}}</p>
 {{template "snapform" .}}
 {{template "picker" .}}
 {{template "foot" .}}{{end}}
