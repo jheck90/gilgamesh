@@ -135,6 +135,16 @@
 </form>
 {{template "foot" .}}{{end}}
 
+{{define "back"}}{{template "head" .}}
+<h1>Move back?</h1>
+<p>{{.Question}}</p>
+<form method="post" action="/b/{{.Book.ID}}/back">
+  <input type="hidden" name="ord" value="{{.Ord}}">
+  <button class="primary" type="submit">Move back</button>
+</form>
+<p><a href="/b/{{.Book.ID}}">Keep my place</a></p>
+{{template "foot" .}}{{end}}
+
 {{define "entity"}}{{template "head" .}}
 <p class="kind">{{.Entity.Type}}</p>
 <h1>{{.Entity.Name}}</h1>

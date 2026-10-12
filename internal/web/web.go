@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /b/{book}/next", s.next)
 	mux.HandleFunc("POST /b/{book}/snap", s.snap)
 	mux.HandleFunc("POST /b/{book}/line", s.line)
+	mux.HandleFunc("POST /b/{book}/back", s.back)
 	mux.HandleFunc("GET /b/{book}/e/{entity}", s.entity)
 	mux.HandleFunc("GET /b/{book}/timeline", s.timeline)
 	return headers(mux)
@@ -213,7 +214,12 @@ func (rd reading) current() int {
 	if rd.pos == nil {
 		return -1
 	}
-	i := sort.Search(len(rd.chapters), func(i int) bool { return rd.chapters[i].LastOrd >= rd.pos.Ord })
+	return rd.chapterOf(rd.pos.Ord)
+}
+
+// chapterOf is the index into chapters of the chapter holding sentence ord.
+func (rd reading) chapterOf(ord int) int {
+	i := sort.Search(len(rd.chapters), func(i int) bool { return rd.chapters[i].LastOrd >= ord })
 	if i == len(rd.chapters) {
 		i--
 	}
@@ -509,7 +515,70 @@ func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if err := s.Store.SetPosition(ctx, user.ID, rd.book.ID, ord); err != nil {
+	s.snapTo(w, r, user, rd, ord)
+}
+
+// snapTo moves the reader's position to sentence ord after a snap. Ahead of
+// the saved position, or with none saved, it moves straight there, and to
+// the same sentence it changes nothing. Behind it, it asks first: a snap of
+// an earlier page, rereading or by accident, mustn't silently move the
+// reader back.
+func (s *Server) snapTo(w http.ResponseWriter, r *http.Request, user store.User, rd reading, ord int) {
+	switch {
+	case rd.pos != nil && ord == rd.pos.Ord:
+	case rd.pos != nil && ord < rd.pos.Ord:
+		s.render(w, "back", map[string]any{
+			"Title":    "Move back?",
+			"Book":     rd.book,
+			"Question": rd.backQuestion(ord),
+			"Ord":      ord,
+		})
+		return
+	default:
+		if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	toBook(w, r, rd)
+}
+
+// backQuestion asks whether to move back to sentence ord, naming both
+// places by chapter: "You’re partway through Chapter 14. Move back to
+// Chapter 12?" Both labels are the saved position's, so it shows no title
+// the reader hasn't reached.
+func (rd reading) backQuestion(ord int) string {
+	i := rd.current()
+	now := "You’re partway through " + rd.label(i) + "."
+	if rd.finished(i) {
+		now = "You’ve finished " + rd.label(i) + "."
+	}
+	j := rd.chapterOf(ord)
+	to := rd.label(j)
+	switch {
+	case j == i:
+		to = "earlier in " + to
+	case ord >= rd.chapters[j].LastOrd:
+		to = "the end of " + to
+	}
+	return now + " Move back to " + to + "?"
+}
+
+// back moves the position to sentence ord once the reader has said "Move
+// back". Like the chapter picker it takes any sentence in the book: it
+// only ever moves the reader's own position.
+func (s *Server) back(w http.ResponseWriter, r *http.Request) {
+	user, rd, err := s.readingFor(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	ord, err := strconv.Atoi(r.FormValue("ord"))
+	if err != nil || len(rd.chapters) == 0 || ord < -1 || ord > rd.chapters[len(rd.chapters)-1].LastOrd {
+		s.fail(w, httpError{http.StatusBadRequest, "That sentence isn’t in the book."})
+		return
+	}
+	if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -535,11 +604,7 @@ func (s *Server) line(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, httpError{http.StatusBadRequest, "That sentence isn’t on the page."})
 		return
 	}
-	if err := s.Store.SetPosition(r.Context(), user.ID, rd.book.ID, ord); err != nil {
-		s.fail(w, err)
-		return
-	}
-	toBook(w, r, rd)
+	s.snapTo(w, r, user, rd, ord)
 }
 
 // tryAgain is a snap that didn't move the position. The reader sees why,
