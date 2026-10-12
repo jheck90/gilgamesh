@@ -85,6 +85,10 @@ button.primary {
   width: 100%; margin: 8px 0 12px; background: var(--accent); color: var(--accent-text);
   border-color: var(--accent); font-weight: 600;
 }
+.lines { margin: 12px 0; }
+.lines button {
+  width: 100%; margin-bottom: 6px; text-align: left; font: inherit; line-height: 1.4;
+}
 .jump summary { font: 15px system-ui, sans-serif; color: var(--accent); cursor: pointer; padding: 6px 0; }
 .search { margin-top: 16px; }
 .timeline li { padding: 10px 0; border-bottom: 1px solid var(--line); }
