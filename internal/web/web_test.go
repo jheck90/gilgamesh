@@ -378,17 +378,26 @@ func TestSnapByPhoto(t *testing.T) {
 			"“The tide always turns,” his mother used to say. A hooded man watched from the dunes.\n“He’s Mordecai,”",
 			"Partway through II The Hooded Man Is Mordecai", true, false},
 		{"a running head and page number",
-			"THE CRAWL                17\n“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"THE CRAWL                17\nturns,” his mother used to say.\nA hooded man watched from the dunes.",
 			"Partway through II The Hooded Man Is Mordecai", true, false},
 		{"a word hyphenated across a line end",
 			"“The tide always turns,” his mother used to say.\nA hooded man watched from the du-\nnes.",
 			"Partway through II The Hooded Man Is Mordecai", true, false},
-		{"OCR typos, down to the page's last words",
+		{"misread words, down to the page's last words",
 			"“Tbe tide always turns,’ his rnother used to say.\nA hooded man watched frorn the dunes.",
 			"Partway through II The Hooded Man Is Mordecai", true, false},
 		{"two facing pages",
-			"16 THE CRAWL\n“The tide always turns,” his\nmother used to say.\n\nII 17\nA hooded man watched from the dunes.",
+			"16 THE CRAWL\nturns,” his\nmother used to say.\n\nII 17\nA hooded man watched from the dunes.",
 			"Partway through II The Hooded Man Is Mordecai", true, false},
+		// Words before the match may be the misread end of the sentence
+		// before, so the page may hold that sentence's reveal. A running
+		// head can't be told from them.
+		{"misread words at the top: the sentence before may be on the page",
+			"Ii vvas Dav l. “The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"Partway through I The Sea-dog", true, false},
+		{"a running head over a page that starts a sentence: so may the one before",
+			"THE CRAWL 17\n“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"Partway through I The Sea-dog", true, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -412,7 +421,7 @@ func TestSnapByPhoto(t *testing.T) {
 
 func TestPhotoSnapStopsBeforeEachKindOfReveal(t *testing.T) {
 	// The page snapped is chapter 2, sentences 1 and 2. Ada is met in
-	// sentence 0, and each case reveals one thing in sentence 2.
+	// sentence 0, and each case puts one reveal in sentence 2.
 	ada := func(rs ...store.AliasRec) store.NewEntity {
 		return store.NewEntity{Name: "Ada", Type: "character", FirstOrd: 0, Aliases: rs}
 	}
@@ -427,7 +436,7 @@ func TestPhotoSnapStopsBeforeEachKindOfReveal(t *testing.T) {
 			Facts: []store.FactRec{{Text: "Ada hears the ferry.", Ord: 2, Evidence: []int{2}}}}}}, false, "Finished Chapter 1"},
 		{"an alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "the keeper", Ord: 2})}}, false, "Finished Chapter 1"},
 		{"a title alias", store.ChunkWrite{New: []store.NewEntity{ada(store.AliasRec{Alias: "Keeper Ada", Ord: 2})}}, true, "Finished Chapter 1"},
-		{"a new entity", store.ChunkWrite{New: []store.NewEntity{ada(), {Name: "the ferry", Type: "thing", FirstOrd: 2}}}, false, "Finished Chapter 1"},
+		{"a new entity", store.ChunkWrite{New: []store.NewEntity{ada(), {Name: "the ferry", Type: "term", FirstOrd: 2}}}, false, "Finished Chapter 1"},
 		{"a time marker", store.ChunkWrite{New: []store.NewEntity{ada()}, Markers: []store.MarkerRec{{Label: "Night 1", Ord: 2}}}, false, "Finished Chapter 1"},
 	}
 	for _, c := range cases {
@@ -506,8 +515,8 @@ func TestPhotoSnapThatFails(t *testing.T) {
 	}{
 		{"unreadable text", nil, photo("~ |l1 ,, .\n\nrn ii Tr"), 200, "Couldn't find this page"},
 		{"a file that isn't an image", nil, []byte("Dear diary, today the tide turned."), 415, "isn’t a photo"},
-		{"a photo over the size cap", func(s *Server) { s.MaxPhoto = 64 }, append(page, bytes.Repeat([]byte(" "), 64)...), 413, "too big"},
-		{"a photo that takes too long to read", func(s *Server) { s.Photos, s.PhotoTimeout = slowPhotos{}, time.Millisecond }, page, 503, "took too long"},
+		{"a photo over the size cap", func(s *Server) { s.maxPhoto = 64 }, append(page, bytes.Repeat([]byte(" "), 64)...), 413, "too big"},
+		{"a photo that takes too long to read", func(s *Server) { s.Photos, s.photoTimeout = slowPhotos{}, time.Millisecond }, page, 503, "took too long"},
 		{"no tesseract program", func(s *Server) { s.Photos = brokenPhotos{} }, page, 503, "Couldn’t read that photo"},
 	}
 	for _, c := range cases {
