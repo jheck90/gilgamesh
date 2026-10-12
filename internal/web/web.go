@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /b/{book}", s.book)
 	mux.HandleFunc("POST /b/{book}/pos", s.setPos)
 	mux.HandleFunc("POST /b/{book}/next", s.next)
+	mux.HandleFunc("POST /b/{book}/snap", s.snap)
 	mux.HandleFunc("GET /b/{book}/e/{entity}", s.entity)
 	mux.HandleFunc("GET /b/{book}/timeline", s.timeline)
 	return headers(mux)
@@ -310,6 +311,17 @@ type chapterOption struct {
 	Selected bool
 }
 
+// options lists the chapters for the picker, the one holding the position
+// selected.
+func (rd reading) options() []chapterOption {
+	cur := rd.current()
+	var opts []chapterOption
+	for i, c := range rd.chapters {
+		opts = append(opts, chapterOption{Idx: c.Idx, Label: rd.label(i), Selected: i == cur})
+	}
+	return opts
+}
+
 func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	_, rd, err := s.readingFor(r)
@@ -317,16 +329,11 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	cur := rd.current()
-	var opts []chapterOption
-	for i, c := range rd.chapters {
-		opts = append(opts, chapterOption{Idx: c.Idx, Label: rd.label(i), Selected: i == cur})
-	}
 	data := map[string]any{
 		"Title":    rd.book.Title,
 		"Book":     rd.book,
 		"Where":    rd.where(),
-		"Chapters": opts,
+		"Chapters": rd.options(),
 		"HasPos":   rd.pos != nil,
 	}
 	if rd.pos == nil {
@@ -401,11 +408,16 @@ func (s *Server) setPos(w http.ResponseWriter, r *http.Request) {
 				s.fail(w, err)
 				return
 			}
-			http.Redirect(w, r, "/b/"+strconv.FormatInt(rd.book.ID, 10), http.StatusSeeOther)
+			toBook(w, r, rd)
 			return
 		}
 	}
 	s.fail(w, httpError{http.StatusBadRequest, "No such chapter."})
+}
+
+// toBook sends the reader back to the book after moving their position.
+func toBook(w http.ResponseWriter, r *http.Request, rd reading) {
+	http.Redirect(w, r, "/b/"+strconv.FormatInt(rd.book.ID, 10), http.StatusSeeOther)
 }
 
 // next marks the chapter being read as finished.
@@ -420,7 +432,45 @@ func (s *Server) next(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	http.Redirect(w, r, "/b/"+strconv.FormatInt(rd.book.ID, 10), http.StatusSeeOther)
+	toBook(w, r, rd)
+}
+
+// snap moves the position to the page in front of the reader, found from
+// the last few words they read: to the sentence the words end in.
+func (s *Server) snap(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, rd, err := s.readingFor(r)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	sents, err := s.Store.Sentences(ctx, rd.book.ID)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	texts := make([]string, len(sents))
+	for i, se := range sents {
+		texts[i] = se.Text
+	}
+	words := r.FormValue("words")
+	page, ok := text.MatchPage(words, texts)
+	if !ok {
+		s.render(w, "unmatched", map[string]any{
+			"Title":    "Couldn't find this page",
+			"Book":     rd.book,
+			"Where":    rd.where(),
+			"HasPos":   rd.pos != nil,
+			"Chapters": rd.options(),
+			"Words":    words,
+		})
+		return
+	}
+	if err := s.Store.SetPosition(ctx, user.ID, rd.book.ID, sents[page.Last].Ord); err != nil {
+		s.fail(w, err)
+		return
+	}
+	toBook(w, r, rd)
 }
 
 func (s *Server) entity(w http.ResponseWriter, r *http.Request) {

@@ -6,7 +6,8 @@ met so far: just the facts the book has given you, nothing past your page.
 
 Status: early. `gmesh` reads an EPUB, takes position-tagged notes on it
 with a model, and serves a small web app you can install on your phone to
-look them up. Page snapping, the visual timeline and reread hints come next.
+look them up. Snapping a page by photo, the visual timeline and reread hints
+come next.
 
 ## How spoilers are kept out
 
@@ -87,9 +88,10 @@ docker exec -it -e ANTHROPIC_API_KEY=... <container> gmesh ingest /books/book.ep
 ```
 
 Open it on your phone and use "Add to Home Screen". Tap "I finished ..."
-at the end of each chapter. Titles of chapters you haven't reached stay
-hidden, and anything you haven't met yet returns the same "Nothing here
-yet" as something that doesn't exist.
+at the end of each chapter. Partway through one, type the last 4 or more
+words you read and tap "Snap" to move to that sentence. Titles of chapters
+you haven't reached stay hidden, and anything you haven't met yet returns
+the same "Nothing here yet" as something that doesn't exist.
 
 There are no accounts. Run it for yourself on a private network, or behind
 an authenticating proxy with `--trust-header Remote-User` so each reader
@@ -137,7 +139,7 @@ admin's key. The first user created is the admin, and approves with
 |---|---|
 | `cmd/gmesh` | the CLI |
 | `internal/epub` | EPUB parsing, chapters split on table-of-contents anchors |
-| `internal/text` | sentence splitting and name matching |
+| `internal/text` | sentence splitting, name matching, and finding a snapped page |
 | `internal/extract` | chunking, the prompt, and the spoiler checks (`validate.go`) |
 | `internal/edit` | the whole-book tidy-up and its checks |
 | `internal/store` | SQLite schema and queries; positions are sentence numbers |

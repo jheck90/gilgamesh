@@ -59,16 +59,11 @@
 </form>
 {{end}}
 
+{{template "snapform" .}}
+
 <details class="jump"{{if not .HasPos}} open{{end}}>
   <summary>{{if .HasPos}}Jump to a chapter{{else}}Where are you?{{end}}</summary>
-  <form method="post" action="/b/{{.Book.ID}}/pos" class="row">
-    <label for="chapter" class="sr">Last chapter you finished</label>
-    <select id="chapter" name="chapter">
-      {{range .Chapters}}<option value="{{.Idx}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
-    </select>
-    <button type="submit">Set</button>
-  </form>
-  <p class="hint">Pick the last chapter you finished. Titles of later chapters stay hidden.</p>
+  {{template "picker" .}}
 </details>
 
 {{if .HasPos}}
@@ -92,6 +87,33 @@
 <p class="empty">{{if .Query}}Nothing by that name yet.{{else}}No one and nothing noted yet.{{end}}</p>
 {{end}}
 {{end}}
+{{template "foot" .}}{{end}}
+
+{{define "snapform"}}
+<form method="post" action="/b/{{.Book.ID}}/snap" class="row">
+  <label for="words" class="sr">The last 4 or more words you read</label>
+  <input id="words" name="words" type="text" value="{{.Words}}" placeholder="Last 4 or more words you read" autocomplete="off">
+  <button type="submit">Snap</button>
+</form>
+{{end}}
+
+{{define "picker"}}
+<form method="post" action="/b/{{.Book.ID}}/pos" class="row">
+  <label for="chapter" class="sr">Last chapter you finished</label>
+  <select id="chapter" name="chapter">
+    {{range .Chapters}}<option value="{{.Idx}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}
+  </select>
+  <button type="submit">Set</button>
+</form>
+<p class="hint">Pick the last chapter you finished. Titles of later chapters stay hidden.</p>
+{{end}}
+
+{{define "unmatched"}}{{template "head" .}}
+<h1>Couldn't find this page</h1>
+{{if .HasPos}}<p class="where">Still: {{.Where}}</p>{{end}}
+<p>Type 4 or more words just as they’re printed, or pick a chapter instead.</p>
+{{template "snapform" .}}
+{{template "picker" .}}
 {{template "foot" .}}{{end}}
 
 {{define "entity"}}{{template "head" .}}
