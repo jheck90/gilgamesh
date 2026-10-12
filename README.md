@@ -104,9 +104,9 @@ rereading an earlier page or by accident, asks first ("You're partway
 through Chapter 14. Move back to Chapter 12?"), and only "Move back"
 changes your position.
 
-After a snap, the book's page shows where you are and, under "On this
-page", the cards for everyone and everything the page names up to there,
-so "who is this?" is one tap away. Someone named further down the page, or
+After a snap, the book shows where you are and, under "On this page", the
+cards for everyone and everything the page names up to there, so "who is
+this?" is one tap away. Someone named further down the page, or
 by a name you haven't learned yet, isn't listed.
 
 Titles of chapters you haven't reached stay hidden, and anything you

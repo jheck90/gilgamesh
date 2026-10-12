@@ -373,7 +373,7 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if pg, ok := snapped(r); ok {
+	if pg, ok := snappedPage(r, rd); ok {
 		named, err := s.namedOn(ctx, rd, es, pg)
 		if err != nil {
 			s.fail(w, err)
@@ -412,11 +412,14 @@ func (s *Server) book(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "book", data)
 }
 
-// snapped is the page a snap sent the reader to the book from, if any.
-func snapped(r *http.Request) (page, bool) {
+// snappedPage is the page a request says the reader snapped, if it names a
+// page of the book. Nothing is kept between a snap and what follows it, so
+// the page travels with each request.
+func snappedPage(r *http.Request, rd reading) (page, bool) {
 	first, err1 := strconv.Atoi(r.FormValue("first"))
 	last, err2 := strconv.Atoi(r.FormValue("last"))
-	return page{first, last}, err1 == nil && err2 == nil && 0 <= first && first <= last
+	return page{first, last}, err1 == nil && err2 == nil && len(rd.chapters) > 0 &&
+		0 <= first && first <= last && last <= rd.chapters[len(rd.chapters)-1].LastOrd
 }
 
 // namedOn lists the entities among es that page pg names up to the
@@ -429,15 +432,15 @@ func (s *Server) namedOn(ctx context.Context, rd reading, es []store.EntitySumma
 		return nil, err
 	}
 	var out []store.EntitySummary
-	listed := map[int64]bool{}
+	seen := map[int64]bool{}
 	for _, se := range sents {
 		for _, e := range es {
-			if listed[e.ID] {
+			if seen[e.ID] {
 				continue
 			}
 			for _, n := range append([]string{e.Name}, e.Aliases...) {
 				if text.ContainsName(se.Text, text.Key(n)) {
-					listed[e.ID] = true
+					seen[e.ID] = true
 					out = append(out, e)
 					break
 				}
@@ -640,7 +643,7 @@ func (s *Server) back(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	if pg, ok := snapped(r); ok {
+	if pg, ok := snappedPage(r, rd); ok {
 		toPage(w, r, rd, pg)
 		return
 	}
@@ -657,16 +660,13 @@ func (s *Server) line(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	first, err1 := strconv.Atoi(r.FormValue("first"))
-	last, err2 := strconv.Atoi(r.FormValue("last"))
-	ord, err3 := strconv.Atoi(r.FormValue("ord"))
-	if err := cmp.Or(err1, err2, err3); err != nil || len(rd.chapters) == 0 ||
-		first < 0 || first > last || last > rd.chapters[len(rd.chapters)-1].LastOrd ||
-		ord < first-1 || ord > last {
+	pg, ok := snappedPage(r, rd)
+	ord, err := strconv.Atoi(r.FormValue("ord"))
+	if !ok || err != nil || ord < pg.first-1 || ord > pg.last {
 		s.fail(w, httpError{http.StatusBadRequest, "That sentence isn’t on the page."})
 		return
 	}
-	s.snapTo(w, r, user, rd, page{first, last}, ord)
+	s.snapTo(w, r, user, rd, pg, ord)
 }
 
 // tryAgain is a snap that didn't move the position. The reader sees why,
