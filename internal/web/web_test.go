@@ -1138,3 +1138,37 @@ func TestPhotoSnapsLogNoText(t *testing.T) {
 		}
 	}
 }
+
+// Each photo snap logs its score, so an operator can see how close real
+// photos come to the threshold: a page is found when at least 4 of the
+// words read, and at least half of them, match the book in order.
+func TestPhotoSnapsLogTheirScore(t *testing.T) {
+	cases := []struct{ name, page, want string }{
+		{"every word matched",
+			"“The tide always turns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"photo snap: 16 of 16 words read matched, found the page"},
+		{"a running head and page number don't match",
+			"THE CRAWL                17\nturns,” his mother used to say.\nA hooded man watched from the dunes.",
+			"photo snap: 13 of 16 words read matched, found the page"},
+		{"under half matched",
+			"A hooded man watched. Postcards from Zanzibar, wish you were here, wish you were there.",
+			"photo snap: 4 of 15 words read matched, couldn't find the page"},
+		{"nothing matched",
+			"A postcard from Zanzibar, wish you were here.",
+			"photo snap: 0 of 8 words read matched, couldn't find the page"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var logged bytes.Buffer
+			out := log.Writer()
+			log.SetOutput(&logged)
+			t.Cleanup(func() { log.SetOutput(out) })
+
+			srv, _ := setup(t, "")
+			snapPhoto(t, srv, "/b/1/snap", photo(c.page))
+			if !strings.Contains(logged.String(), c.want) {
+				t.Errorf("want %q logged:\n%s", c.want, &logged)
+			}
+		})
+	}
+}
