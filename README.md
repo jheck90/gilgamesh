@@ -122,7 +122,9 @@ tesseract`). Without it everything else, typed words included, still works.
 
 The log gets each photo snap's score, but never its text: "photo snap: 41
 of 63 words read matched, found the page". A page is found when at least 4
-of the words read, and at least half of them, match the book in order.
+of the words read, and at least half of them, match the book in order. A
+word only counts as part of 3 matched words in a row, so one misread word
+can leave its neighbours unmatched too.
 
 There are no accounts. Run it for yourself on a private network, or behind
 an authenticating proxy with `--trust-header Remote-User` so each reader

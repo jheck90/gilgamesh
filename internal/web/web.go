@@ -721,7 +721,7 @@ func (s *Server) snapPhoto(w http.ResponseWriter, r *http.Request, bookID int64,
 	if !ok {
 		outcome = "couldn't find the page"
 	}
-	log.Printf("web: photo snap: %d of %d words read matched, %s", found.Matched, found.Words, outcome)
+	log.Printf("web: photo snap: %d of %d words read matched, %s", found.Matched, found.Read, outcome)
 	if !ok {
 		return page{}, 0, nil, tryAgain{code: http.StatusOK,
 			msg: "Retake the photo with the whole page flat and in focus, type 4 or more words just as they’re printed, or pick a chapter instead."}

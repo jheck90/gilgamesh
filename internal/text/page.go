@@ -15,9 +15,9 @@ type Page struct {
 	// Cut is true when the text stops partway through sentence Last, as a
 	// photo does when a sentence runs on to the next page.
 	Cut bool
-	// Matched of the text's Words were found in the book, in order: the
-	// match's score. Both are set whether or not it's a match.
-	Matched, Words int
+	// Matched of the text's Read words were found in the book, in order:
+	// the match's score. Both are set whether or not it's a match.
+	Matched, Read int
 }
 
 const (
@@ -87,7 +87,7 @@ func MatchPage(text string, sentences []string) (page Page, ok bool) {
 		matched = hits[best].words
 	}
 	if matched < pageMinWords || 2*matched < len(q) {
-		return Page{Matched: matched, Words: len(q)}, false
+		return Page{Matched: matched, Read: len(q)}, false
 	}
 	first := best
 	for hits[first].prev >= 0 {
@@ -114,7 +114,7 @@ func MatchPage(text string, sentences []string) (page Page, ok bool) {
 		Last:    last,
 		Cut:     rest > len(more) || 2*right < rest,
 		Matched: matched,
-		Words:   len(q),
+		Read:    len(q),
 	}, true
 }
 
