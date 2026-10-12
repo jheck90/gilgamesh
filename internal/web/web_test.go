@@ -852,6 +852,193 @@ func follow(t *testing.T, srv *httptest.Server, page, label string) (int, string
 	return 0, ""
 }
 
+// lighthouse starts the web app over a book whose pages name people in
+// different ways: Ada by name, and Tom by name and as "the stranger".
+func lighthouse(t *testing.T) *httptest.Server {
+	t.Helper()
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "w.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	sid, _ := st.EnsureSeries(ctx, "Lighthouse")
+	bid, err := st.CreateBook(ctx, store.Book{SeriesID: sid, SeriesIndex: 1, Title: "The Lamp", SHA256: "l", SourcePath: "l"},
+		[]store.Chapter{
+			{Idx: 1, Title: "Chapter 1", FirstOrd: 0, LastOrd: 1},
+			{Idx: 2, Title: "Chapter 2", FirstOrd: 2, LastOrd: 7},
+			{Idx: 3, Title: "The Stranger Was Tom", FirstOrd: 8, LastOrd: 8},
+		},
+		[]store.Sentence{
+			{Ord: 0, ChapterIdx: 1, Text: "Ada climbed the lighthouse stairs at dusk."},
+			{Ord: 1, ChapterIdx: 1, Text: "Tom rowed out to the rocks with the post."},
+			{Ord: 2, ChapterIdx: 2, Text: "The wind dropped and the sea went flat and grey."},
+			{Ord: 3, ChapterIdx: 2, Text: "Ada said the lamp had to be lit before the ships came in."},
+			{Ord: 4, ChapterIdx: 2, Text: "From the gallery she watched the ferry come round the point."},
+			{Ord: 5, ChapterIdx: 2, Text: "A stranger in grey stepped off onto the quay."},
+			{Ord: 6, ChapterIdx: 2, Text: "Ada knew him at once: it was Tom, home from the sea."},
+			{Ord: 7, ChapterIdx: 2, Text: "After that night the village called her Keeper Ada."},
+			{Ord: 8, ChapterIdx: 3, Text: "Nobody answered the horn that night."},
+		}, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.ApplyChunk(ctx, store.ChunkWrite{BookID: bid, SeriesID: sid, NextChunk: 1,
+		New: []store.NewEntity{
+			{Name: "Ada", Type: "character", FirstOrd: 0,
+				Aliases: []store.AliasRec{{Alias: "Keeper Ada", Ord: 7}},
+				Facts: []store.FactRec{
+					{Text: "Ada climbs to the lamp at dusk.", Ord: 0, Evidence: []int{0}},
+					{Text: "Ada watches for the ferry.", Ord: 4, Evidence: []int{4}},
+					{Text: "The village calls Ada its keeper.", Ord: 7, Evidence: []int{7}},
+				}},
+			{Name: "Tom", Type: "character", FirstOrd: 1,
+				Aliases: []store.AliasRec{{Alias: "the stranger", Ord: 6}},
+				Facts:   []store.FactRec{{Text: "Tom rows the post out to the rocks.", Ord: 1, Evidence: []int{1}}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _, _ := st.BookByID(ctx, bid)
+	notes, err := st.BookNotes(ctx, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ada := notes.Entities[0]
+	if _, err := st.ApplyEdit(ctx, store.Edit{BookID: bid, SeriesID: sid,
+		Titles: []store.Title{{Entity: ada.ID, Alias: ada.Aliases[0].ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	return serve(t, st, "")
+}
+
+// lighthouseFacts are the facts on each card in the lighthouse book, and
+// the sentence that reveals each.
+var lighthouseFacts = map[string]map[string]int{
+	"/b/1/e/1": {"Ada climbs to the lamp at dusk.": 0, "Ada watches for the ferry.": 4, "The village calls Ada its keeper.": 7},
+	"/b/1/e/2": {"Tom rows the post out to the rocks.": 1},
+}
+
+// listed is a card listed on the page a snap lands on: its title and the
+// link to it.
+type listed struct{ title, href string }
+
+// onThisPage is the "On this page" section of a page: the cards it lists
+// in order and everything it says. ok is false without one.
+func onThisPage(t *testing.T, page string) (cards []listed, says string, ok bool) {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for n := range doc.Descendants() {
+		if n.Type != html.ElementNode || n.Data != "section" || attrOf(n, "class") != "page" {
+			continue
+		}
+		for a := range n.Descendants() {
+			if a.Type != html.ElementNode || a.Data != "a" {
+				continue
+			}
+			c := listed{href: attrOf(a, "href")}
+			for s := range a.Descendants() {
+				if s.Type == html.ElementNode && attrOf(s, "class") == "name" {
+					c.title = strings.TrimSpace(textOf(s))
+				}
+			}
+			cards = append(cards, c)
+		}
+		return cards, strings.Join(strings.Fields(textOf(n)), " "), true
+	}
+	return nil, "", false
+}
+
+func TestCardsAfterASnap(t *testing.T) {
+	// Ada is met in sentence 0 and Tom in 1. Tom is "the stranger" from 6
+	// on, and Ada's card is titled "Keeper Ada" from 7.
+	ada, tom := listed{"Ada", "/b/1/e/1"}, listed{"Tom", "/b/1/e/2"}
+	// The page holds a fact in 4 and an alias in 6, so a photo of it asks
+	// how far down the reader has got.
+	asks := "Ada said the lamp had to be lit before the ships came in.\nFrom the gallery she watched the ferry come round the point.\n" +
+		"A stranger in grey stepped off onto the quay.\nAda knew him at once: it was Tom, home from the sea."
+	cases := []struct {
+		name  string
+		snap  snapping
+		where string
+		pos   int
+		cards []listed
+	}{
+		{"typed words: who they name", typing("ada said the lamp had to be lit"),
+			"Partway through Chapter 2", 3, []listed{ada}},
+		{"a photo with nothing revealed lands on the same view",
+			photographing("The wind dropped and the sea went flat and grey.\nAda said the lamp had to be lit before the ships came in."),
+			"Partway through Chapter 2", 3, []listed{ada}},
+		{"named only after the sentence tapped: not listed",
+			tapping(asks, "From the gallery she watched the ferry come round the point."),
+			"Partway through Chapter 2", 4, []listed{ada}},
+		{"named by an alias revealed later on the page: not listed",
+			tapping(asks, "A stranger in grey stepped off onto the quay."),
+			"Partway through Chapter 2", 5, []listed{ada}},
+		{"named by an alias once it's revealed: listed where the page first names them",
+			typing("a stranger in grey stepped off onto the quay. ada knew him at once"),
+			"Partway through Chapter 2", 6, []listed{tom, ada}},
+		{"a card titled by an alias once it's revealed", typing("the village called her keeper ada"),
+			"Finished Chapter 2", 7, []listed{{"Keeper Ada", "/b/1/e/1"}}},
+		{"a page naming no one", typing("the sea went flat and grey"),
+			"Partway through Chapter 2", 2, nil},
+		{"not started on the page: no one yet", tapping(asks, notStarted),
+			"Partway through Chapter 2", 2, nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			srv := lighthouse(t)
+			body := c.snap(t, srv)
+			if !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("want %q:\n%s", c.where, body)
+			}
+			cards, says, ok := onThisPage(t, body)
+			if !ok || !slices.Equal(cards, c.cards) {
+				t.Errorf("listed %v, want %v\n%s", cards, c.cards, body)
+			}
+			if c.cards == nil && !strings.Contains(says, "No one and nothing named on this page so far has a card.") {
+				t.Errorf("a page naming no one should say so:\n%s", says)
+			}
+			if c.pos < 7 && (strings.Contains(body, "Keeper Ada") || strings.Contains(body, "Stranger Was Tom")) {
+				t.Errorf("a title revealed past the position leaked:\n%s", body)
+			}
+			for _, card := range cards {
+				code, body := send(t, srv, "", card.href, nil)
+				if code != 200 || !strings.Contains(body, "<h1>"+card.title+"</h1>") {
+					t.Errorf("%s's card: %d\n%s", card.title, code, body)
+				}
+				for fact, ord := range lighthouseFacts[card.href] {
+					if shown := strings.Contains(body, fact); shown != (ord <= c.pos) {
+						t.Errorf("%s's card at sentence %d shows %q = %v; it's revealed at %d", card.title, c.pos, fact, shown, ord)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCardsAfterMovingBack(t *testing.T) {
+	// The reader has finished chapter 2, where Ada's card takes the title
+	// "Keeper Ada" in its last sentence, then snaps a page earlier in it.
+	srv := lighthouse(t)
+	send(t, srv, "", "/b/1/snap", url.Values{"words": {"the village called her keeper ada"}})
+	question := typing("ada said the lamp had to be lit")(t, srv)
+	if _, _, ok := onThisPage(t, question); ok || strings.Contains(question, "/b/1/e/") {
+		t.Errorf("the question listed cards before the reader moved back:\n%s", question)
+	}
+	_, body := tap(t, srv, question, "Move back")
+	if !strings.Contains(body, `<p class="where">Partway through Chapter 2</p>`) {
+		t.Errorf("moving back didn't move:\n%s", body)
+	}
+	if cards, _, _ := onThisPage(t, body); !slices.Equal(cards, []listed{{"Ada", "/b/1/e/1"}}) {
+		t.Errorf("listed %v, want Ada by the title she has at the new position\n%s", cards, body)
+	}
+}
+
 // slowPhotos takes longer to read a photo than the server waits.
 type slowPhotos struct{}
 
