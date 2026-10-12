@@ -26,6 +26,10 @@ _Avoid_: scan, capture, OCR (that's how, not what)
 The run of sentences a snap matched: what the reader has in front of them, not a unit of the EPUB. A photo of two facing pages is still one page.
 _Avoid_: screen, spread
 
+**Line question**:
+What a snap asks when its page holds a reveal: which of the page's sentences the reader read last, or that they haven't started the page.
+_Avoid_: "line" alone for a sentence (a printed line isn't one)
+
 ### Notes
 
 **Entity**:
