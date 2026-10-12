@@ -984,10 +984,18 @@ func TestCardsAfterASnap(t *testing.T) {
 			"Partway through Chapter 2", 6, []listed{tom, ada}},
 		{"a card titled by an alias once it's revealed", typing("the village called her keeper ada"),
 			"Finished Chapter 2", 7, []listed{{"Keeper Ada", "/b/1/e/1"}}},
+		{"a snap to where the reader already is",
+			func(t *testing.T, srv *httptest.Server) string {
+				typing("ada said the lamp had to be lit")(t, srv)
+				return typing("ada said the lamp had to be lit")(t, srv)
+			},
+			"Partway through Chapter 2", 3, []listed{ada}},
 		{"a page naming no one", typing("the sea went flat and grey"),
 			"Partway through Chapter 2", 2, nil},
 		{"not started on the page: no one yet", tapping(asks, notStarted),
 			"Partway through Chapter 2", 2, nil},
+		{"a photo showing no sentence whole: no one yet", photographing("The wind dropped and the sea went"),
+			"Finished Chapter 1", 1, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -1021,21 +1029,33 @@ func TestCardsAfterASnap(t *testing.T) {
 	}
 }
 
-func TestCardsAfterMovingBack(t *testing.T) {
+func TestCardsAfterASnapBehindThePosition(t *testing.T) {
 	// The reader has finished chapter 2, where Ada's card takes the title
 	// "Keeper Ada" in its last sentence, then snaps a page earlier in it.
-	srv := lighthouse(t)
-	send(t, srv, "", "/b/1/snap", url.Values{"words": {"the village called her keeper ada"}})
-	question := typing("ada said the lamp had to be lit")(t, srv)
-	if _, _, ok := onThisPage(t, question); ok || strings.Contains(question, "/b/1/e/") {
-		t.Errorf("the question listed cards before the reader moved back:\n%s", question)
+	cases := []struct {
+		answer       func(t *testing.T, srv *httptest.Server, page, label string) (int, string)
+		label, where string
+		cards        []listed
+	}{
+		{tap, "Move back", "Partway through Chapter 2", []listed{{"Ada", "/b/1/e/1"}}},
+		{follow, "Keep my place", "Finished Chapter 2", []listed{{"Keeper Ada", "/b/1/e/1"}}},
 	}
-	_, body := tap(t, srv, question, "Move back")
-	if !strings.Contains(body, `<p class="where">Partway through Chapter 2</p>`) {
-		t.Errorf("moving back didn't move:\n%s", body)
-	}
-	if cards, _, _ := onThisPage(t, body); !slices.Equal(cards, []listed{{"Ada", "/b/1/e/1"}}) {
-		t.Errorf("listed %v, want Ada by the title she has at the new position\n%s", cards, body)
+	for _, c := range cases {
+		t.Run(c.label, func(t *testing.T) {
+			srv := lighthouse(t)
+			send(t, srv, "", "/b/1/snap", url.Values{"words": {"the village called her keeper ada"}})
+			question := typing("ada said the lamp had to be lit")(t, srv)
+			if _, _, ok := onThisPage(t, question); ok || strings.Contains(question, "/b/1/e/") {
+				t.Errorf("the question listed cards before the reader answered:\n%s", question)
+			}
+			_, body := c.answer(t, srv, question, c.label)
+			if !strings.Contains(body, `<p class="where">`+c.where+`</p>`) {
+				t.Errorf("want %q:\n%s", c.where, body)
+			}
+			if cards, _, _ := onThisPage(t, body); !slices.Equal(cards, c.cards) {
+				t.Errorf("listed %v, want %v: Ada by her title where the reader now is\n%s", cards, c.cards, body)
+			}
+		})
 	}
 }
 

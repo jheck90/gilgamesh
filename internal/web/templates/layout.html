@@ -159,7 +159,7 @@
   <input type="hidden" name="last" value="{{.Last}}">
   <button class="primary" type="submit">Move back</button>
 </form>
-<p><a href="/b/{{.Book.ID}}">Keep my place</a></p>
+<p><a href="/b/{{.Book.ID}}?first={{.First}}&amp;last={{.Last}}">Keep my place</a></p>
 {{template "foot" .}}{{end}}
 
 {{define "entity"}}{{template "head" .}}
