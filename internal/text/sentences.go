@@ -1,5 +1,5 @@
-// Package text splits book paragraphs into sentences and matches names
-// inside them.
+// Package text splits book paragraphs into sentences, matches names
+// inside them, and finds a snapped page among them.
 package text
 
 import (
